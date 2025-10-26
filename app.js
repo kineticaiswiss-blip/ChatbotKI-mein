@@ -30,30 +30,40 @@ bot.start((ctx) =>
 
 // 🔹 Wenn jemand etwas schreibt
 bot.on("text", async (ctx) => {
-try {
-  const userText = ctx.message.text.toLowerCase().trim();
-  const memory = loadMemory();
+  try {
+    const userText = ctx.message.text.toLowerCase().trim();
+    const userId = ctx.from.id;
+    const memory = loadMemory();
 
-  if (memory[userText]) {
-    // Kennt die Antwort schon
-    await ctx.reply(memory[userText]);
-  } else {
-    // Kennt es noch nicht
-    await ctx.reply(`🤔 Ich kenne "${userText}" noch nicht. Was soll ich darauf antworten?`);
-
-    // Warte auf die nächste Nachricht vom gleichen Nutzer
-    bot.once("text", async (newCtx) => {
-      const answer = newCtx.message.text.trim();
-      memory[userText] = answer; // speichern
+    // Wenn der Nutzer gerade "Lehrmodus" aktiv hat
+    if (memory._learning && memory._learning[userId]) {
+      const question = memory._learning[userId];
+      const answer = userText;
+      memory[question] = answer;
+      delete memory._learning[userId];
       saveMemory(memory);
-      await newCtx.reply("💾 Danke! Ich habe das gelernt.");
-    });
+      await ctx.reply("💾 Danke! Ich habe das gelernt.");
+      return;
+    }
+
+    // Wenn der Bot die Frage schon kennt
+    if (memory[userText]) {
+      await ctx.reply(memory[userText]);
+    } else {
+      // Neues Wort → fragen, was er lernen soll
+      await ctx.reply(`🤔 Ich kenne "${userText}" noch nicht. Was soll ich darauf antworten?`);
+
+      // Nutzer merken, dass er gerade etwas beibringt
+      if (!memory._learning) memory._learning = {};
+      memory._learning[userId] = userText;
+      saveMemory(memory);
+    }
+  } catch (error) {
+    console.error("❌ Fehler im Bot:", error);
+    await ctx.reply("⚠️ Es ist ein Fehler aufgetreten. Bitte versuche es nochmal!");
   }
-}} catch (error) {
-  console.error("❌ Fehler im Bot:", error);
-  await ctx.reply("⚠️ Es ist ein Fehler aufgetreten. Bitte versuche es nochmal!");
-}
-);
+});
+
 
 bot.launch();
 
