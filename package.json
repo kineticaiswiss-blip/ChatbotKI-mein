@@ -1,0 +1,14 @@
+{
+  "name": "chatbotki-mein",
+  "version": "1.0.0",
+  "description": "Mein Telegram Chatbot",
+  "main": "app.js",
+  "type": "module",
+  "scripts": {
+    "start": "node app.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "telegraf": "^4.12.2"
+  }
+}
