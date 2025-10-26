@@ -1,78 +1,75 @@
 import express from "express";
 import { Telegraf } from "telegraf";
-import fs from "fs";
 import OpenAI from "openai";
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
+import fs from "fs";
 
 const app = express();
 
-// 🔹 Telegram-Bot-Token (aus Render Environment oder hier direkt)
-const bot = new Telegraf(process.env.BOT_TOKEN || "8095209153:AAEf26PD2H0m4xUSxSsYXQ70zQRlRF8L5Tk");
+// 🔑 Bot & API Keys
+const BOT_TOKEN = process.env.BOT_TOKEN || "DEIN_TELEGRAM_TOKEN_HIER";
+const OPENAI_KEY = process.env.OPENAI_API_KEY || "DEIN_OPENAI_KEY_HIER";
 
-// 🔹 Datei für das gespeicherte Wissen
+// 🧠 OpenAI Client
+const openai = new OpenAI({ apiKey: OPENAI_KEY });
+const bot = new Telegraf(BOT_TOKEN);
+
+// 🗂 Speicherdatei
 const DATA_FILE = "./memory.json";
+if (!fs.existsSync(DATA_FILE)) fs.writeFileSync(DATA_FILE, JSON.stringify({}));
 
-// Wenn Datei noch nicht existiert → anlegen
-if (!fs.existsSync(DATA_FILE)) {
-  fs.writeFileSync(DATA_FILE, JSON.stringify({}));
-}
+const loadMemory = () => JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
+const saveMemory = (m) => fs.writeFileSync(DATA_FILE, JSON.stringify(m, null, 2));
 
-// 🔹 Speicherfunktionen
-function loadMemory() {
-  return JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
-}
-function saveMemory(memory) {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(memory, null, 2));
-}
+// 🧩 Startbefehl
+bot.start((ctx) => ctx.reply("👋 Hallo! Ich bin dein lernender KI-Bot."));
 
-// 🔹 Variable, um zu merken, ob jemand gerade dem Bot etwas beibringt
-let pendingQuestion = null;
-
-// 🔹 Startbefehl
-bot.start((ctx) =>
-  ctx.reply("👋 Hallo! Ich bin ein lernender Chatbot. Frag mich etwas!")
-);
-
-// 🔹 Lern- und Antwortlogik
+// 💬 Hauptlogik
 bot.on("text", async (ctx) => {
   try {
-    const text = ctx.message.text.toLowerCase().trim();
+    const userText = ctx.message.text.trim();
     const memory = loadMemory();
 
-    // Wenn der Bot gerade auf eine Antwort wartet
-    if (pendingQuestion) {
-      memory[pendingQuestion] = text;
+    // Wenn der Nutzer gerade im Lehrmodus ist
+    if (memory._teaching && memory._teaching[ctx.from.id]) {
+      const intent = memory._teaching[ctx.from.id];
+      memory[intent] = userText;
+      delete memory._teaching[ctx.from.id];
       saveMemory(memory);
-      await ctx.reply(
-        `💾 Super! Ich habe gelernt: Wenn jemand "${pendingQuestion}" sagt, antworte "${text}".`
-      );
-      pendingQuestion = null;
+      await ctx.reply(`💾 Ich habe gelernt, wie ich auf "${intent}" antworten soll.`);
       return;
     }
 
-    // Wenn der Bot das Wort bereits kennt
-    if (memory[text]) {
-      await ctx.reply(memory[text]);
-    } else {
-      // Wenn der Bot das Wort noch nicht kennt
-      await ctx.reply(`Ich kenne "${text}" noch nicht. Was soll ich darauf antworten?`);
-      pendingQuestion = text;
+    // Schritt 1: ChatGPT sagt, was der Nutzer *meint*
+    const aiResp = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        { role: "system", content: "Du bist ein Intent-Classifier. Sag nur das Thema oder die Bedeutung in 1-3 Wörtern." },
+        { role: "user", content: userText }
+      ]
+    });
+
+    const intent = aiResp.choices[0].message.content.toLowerCase().trim();
+
+    // Schritt 2: Prüfen, ob der Bot schon weiß, was zu tun ist
+    if (memory[intent]) {
+      await ctx.reply(memory[intent]);
+      return;
     }
-  } catch (error) {
-    console.error("❌ Fehler im Bot:", error);
-    await ctx.reply("⚠️ Es ist ein Fehler aufgetreten. Bitte versuche es nochmal!");
+
+    // Schritt 3: Wenn er das Thema nicht kennt → fragen
+    if (!memory._teaching) memory._teaching = {};
+    memory._teaching[ctx.from.id] = intent;
+    saveMemory(memory);
+    await ctx.reply(`Ich kenne "${intent}" noch nicht. Was soll ich darauf antworten?`);
+
+  } catch (err) {
+    console.error("❌ Fehler:", err);
+    await ctx.reply("⚠️ Es gab einen Fehler. Bitte versuch es nochmal!");
   }
 });
 
-// 🔹 Bot starten
-try {
-  bot.launch();
-  console.log("🤖 Bot wurde gestartet!");
-} catch (error) {
-  console.error("Fehler beim Starten des Bots:", error);
-}
-
-// 🔹 Webserver für Render
-app.get("/", (req, res) => res.send("🤖 KI-Chatbot läuft und lernt!"));
+// 🌐 Server für Render
+bot.launch();
+app.get("/", (req, res) => res.send("🤖 Lernender Bot läuft!"));
 app.listen(10000, () => console.log("🌐 Server läuft auf Port 10000"));
+
