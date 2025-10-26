@@ -1,6 +1,9 @@
 import express from "express";
 import { Telegraf } from "telegraf";
 import fs from "fs";
+import OpenAI from "openai";
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
 
 const app = express();
 
