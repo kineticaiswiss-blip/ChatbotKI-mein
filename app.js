@@ -4,7 +4,7 @@ import { Telegraf } from "telegraf";
 const app = express();
 
 // Setze hier deinen Telegram Bot Token ein
-const bot = new Telegraf(process.env.BOT_TOKEN || "DEIN_BOT_TOKEN_HIER");
+const bot = new Telegraf(process.env.BOT_TOKEN || "8095209153:AAEf26PD2H0m4xUSxSsYXQ70zQRlRF8L5Tk");
 
 bot.start((ctx) => ctx.reply("👋 Hallo! Ich bin dein Chatbot."));
 bot.on("text", (ctx) => ctx.reply(`Du hast gesagt: ${ctx.message.text}`));
