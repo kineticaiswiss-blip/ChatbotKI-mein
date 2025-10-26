@@ -47,11 +47,30 @@ bot.on("text", async (ctx) => {
     }
 
     // Wenn der Bot die Frage schon kennt
-    if (memory[userText]) {
-      await ctx.reply(memory[userText]);
-    } else {
-      // Neues Wort → fragen, was er lernen soll
-      await ctx.reply(`🤔 Ich kenne "${userText}" noch nicht. Was soll ich darauf antworten?`);
+  let pendingQuestion = null;
+
+bot.on("text", async (ctx) => {
+  const text = ctx.message.text.toLowerCase();
+
+  // Wenn der Bot gerade auf eine Antwort wartet:
+  if (pendingQuestion) {
+    memory[pendingQuestion] = text;
+    await fs.writeFile("memory.json", JSON.stringify(memory, null, 2));
+    await ctx.reply(`Super! Ich habe gelernt: Wenn jemand "${pendingQuestion}" sagt, antworte "${text}".`);
+    pendingQuestion = null;
+    return;
+  }
+
+  // Wenn der Bot die Eingabe schon kennt:
+  if (memory[text]) {
+    await ctx.reply(memory[text]);
+  } else {
+    // Wenn der Bot das Wort noch nicht kennt:
+    await ctx.reply(`Ich kenne "${text}" noch nicht. Was soll ich darauf antworten?`);
+    pendingQuestion = text; // Speichern, worauf er gerade wartet
+  }
+});
+
 
       // Nutzer merken, dass er gerade etwas beibringt
       if (!memory._learning) memory._learning = {};
