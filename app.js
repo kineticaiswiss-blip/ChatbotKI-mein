@@ -30,6 +30,7 @@ bot.start((ctx) =>
 
 // 🔹 Wenn jemand etwas schreibt
 bot.on("text", async (ctx) => {
+try {
   const userText = ctx.message.text.toLowerCase().trim();
   const memory = loadMemory();
 
@@ -48,7 +49,11 @@ bot.on("text", async (ctx) => {
       await newCtx.reply("💾 Danke! Ich habe das gelernt.");
     });
   }
-});
+}} catch (error) {
+  console.error("❌ Fehler im Bot:", error);
+  await ctx.reply("⚠️ Es ist ein Fehler aufgetreten. Bitte versuche es nochmal!");
+}
+);
 
 bot.launch();
 
