@@ -5,7 +5,7 @@ import fs from "fs";
 const app = express();
 
 // Bot-Token aus Render Environment oder direkt im Code
-const bot = new Telegraf(process.env.BOT_TOKEN || "DEIN_BOT_TOKEN_HIER");
+const bot = new Telegraf(process.env.BOT_TOKEN || "8095209153:AAEf26PD2H0m4xUSxSsYXQ70zQRlRF8L5Tk");
 
 // 🔹 Speicherdatei für Wissen
 const DATA_FILE = "./memory.json";
