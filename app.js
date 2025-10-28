@@ -13,7 +13,7 @@ const openai = new OpenAI({
 
 // === Dateien & Einstellungen ===
 const DATA_FILE = "./businessinfo.json";
-const ADMIN_USERNAME = "laderakh"; // egal ob du LaderAKH oder laderakh nutzt
+const ADMIN_USERNAME = "laderakh".toLowerCase(); // egal ob du LaderAKH oder laderakh nutzt
 const adminSessions = {}; // speichert wer gerade Admin-Modus aktiv hat
 
 // === Datei prüfen / erstellen ===
