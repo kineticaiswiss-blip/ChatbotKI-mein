@@ -36,19 +36,22 @@ bot.start((ctx) => {
 });
 
 // 🟢 Befehl: Businessdaten bearbeiten (nur für Admin)
+const adminSessions = {}; // Speichert Admin-Modus pro Benutzer
+
 bot.command("businessinfo", async (ctx) => {
   const username = ctx.from.username;
   if (username !== ADMIN_USERNAME) {
     return ctx.reply("🚫 Nur der Geschäftsinhaber darf diesen Befehl verwenden.");
   }
 
+  adminSessions[ctx.from.id] = true;
   ctx.reply(
-    "🧾 Du bist im Admin-Modus.\nSchreibe im Format:\n`produkt: apfelsaft = 2.50 €`\noder\n`info: öffnungszeiten = Mo–Fr 8–18 Uhr`\nSchreibe `/exit`, um den Modus zu beenden."
+    "🧾 Du bist im Admin-Modus.\n" +
+    "Schreibe im Format:\n`produkt: apfelsaft = 2.50 €`\noder\n`info: öffnungszeiten = Mo–Fr 8–18 Uhr`\n" +
+    "Schreibe `/exit`, um den Modus zu beenden."
   );
-
-  // Speichert, dass dieser User gerade im Admin-Modus ist
-  bot.context.adminEditing = true;
 });
+
 
 // 🟡 Textnachrichten
 bot.on("text", async (ctx) => {
@@ -57,11 +60,14 @@ bot.on("text", async (ctx) => {
   const data = loadData();
 
   // Wenn Admin im Bearbeitungsmodus ist
-  if (bot.context.adminEditing && username === ADMIN_USERNAME) {
-    if (message === "/exit") {
-      bot.context.adminEditing = false;
-      return ctx.reply("✅ Admin-Modus beendet.");
-    }
+if (adminSessions[ctx.from.id]) {
+  if (message === "/exit") {
+    delete adminSessions[ctx.from.id];
+    return ctx.reply("✅ Admin-Modus beendet.");
+  }
+  ...
+}
+
 
     // Eintrag speichern
     try {
@@ -97,14 +103,16 @@ bot.on("text", async (ctx) => {
   }
 
   // 🧩 Schritt 2: Allgemeine Fragen mit ChatGPT verstehen
-  try {
-    const prompt = `
-      Du bist ein KI-Assistent für ein Geschäft.
-      Antworte nur auf allgemeine Fragen (z. B. Wochentag, Zeit, Wetter, Smalltalk).
-      Wenn die Frage sich auf Produkte, Preise oder Öffnungszeiten bezieht,
-      sage höflich: "Diese Information habe ich nicht, bitte frage direkt beim Geschäft nach."
-      Frage: "${message}"
-    `;
+const prompt = `
+Du bist ein smarter, freundlicher KI-Assistent eines Geschäfts.
+Du darfst nur auf allgemeine, neutrale Fragen antworten (z. B. Wochentag, Zeit, Wetter, Smalltalk).
+Wenn du unsicher bist oder die Frage nicht verstehst, formuliere sie klarer
+und frage höflich beim Nutzer nach, ob du sie richtig verstanden hast.
+Wenn die Frage geschäftlich ist (Produkte, Preise, Öffnungszeiten),
+sage höflich: "Diese Information habe ich nicht, bitte frage direkt beim Geschäft nach."
+Frage: "${message}"
+`;
+
 
     const gptResponse = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -121,6 +129,8 @@ bot.on("text", async (ctx) => {
 });
 
 // Serverstart
+process.once("SIGINT", () => bot.stop("SIGINT"));
+process.once("SIGTERM", () => bot.stop("SIGTERM"));
 bot.launch();
 app.get("/", (req, res) => res.send("🤖 Business-KI-Bot läuft"));
 app.listen(10000, () => console.log("🌐 Server läuft auf Port 10000"));
