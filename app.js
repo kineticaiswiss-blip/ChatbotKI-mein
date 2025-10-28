@@ -12,12 +12,12 @@ const openai = new OpenAI({
 // Pfad zur Business-Datenbank
 const DATA_FILE = "./businessinfo.json";
 
-// Wenn die Datei nicht existiert → leere Datei anlegen
+// Wenn Datei nicht existiert → neue erstellen
 if (!fs.existsSync(DATA_FILE)) {
   fs.writeFileSync(DATA_FILE, JSON.stringify({ produkte: {}, info: {} }, null, 2));
 }
 
-// Hilfsfunktionen zum Laden/Speichern
+// Hilfsfunktionen
 function loadData() {
   return JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
 }
@@ -25,19 +25,16 @@ function saveData(data) {
   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
 }
 
-// Admin-Telegram-Benutzername
+// Admin-Benutzername
 const ADMIN_USERNAME = "laderakh";
+const adminSessions = {}; // speichert, wer gerade im Admin-Modus ist
 
-// 🟢 Befehl: Start
+// 🟢 /start
 bot.start((ctx) => {
-  ctx.reply(
-    "👋 Hallo! Ich bin der Business-KI-Bot. Frag mich gern etwas über unsere Produkte oder Allgemeines!"
-  );
+  ctx.reply("👋 Hallo! Ich bin der Business-KI-Bot. Frag mich gern etwas über unsere Produkte oder Allgemeines!");
 });
 
-// 🟢 Befehl: Businessdaten bearbeiten (nur für Admin)
-const adminSessions = {}; // Speichert Admin-Modus pro Benutzer
-
+// 🟢 /businessinfo (nur Admin)
 bot.command("businessinfo", async (ctx) => {
   const username = ctx.from.username;
   if (username !== ADMIN_USERNAME) {
@@ -47,11 +44,10 @@ bot.command("businessinfo", async (ctx) => {
   adminSessions[ctx.from.id] = true;
   ctx.reply(
     "🧾 Du bist im Admin-Modus.\n" +
-    "Schreibe im Format:\n`produkt: apfelsaft = 2.50 €`\noder\n`info: öffnungszeiten = Mo–Fr 8–18 Uhr`\n" +
-    "Schreibe `/exit`, um den Modus zu beenden."
+      "Schreibe im Format:\n`produkt: apfelsaft = 2.50 €`\noder\n`info: öffnungszeiten = Mo–Fr 8–18 Uhr`\n" +
+      "Schreibe `/exit`, um den Modus zu beenden."
   );
 });
-
 
 // 🟡 Textnachrichten
 bot.on("text", async (ctx) => {
@@ -59,17 +55,13 @@ bot.on("text", async (ctx) => {
   const message = ctx.message.text.toLowerCase().trim();
   const data = loadData();
 
-  // Wenn Admin im Bearbeitungsmodus ist
-if (adminSessions[ctx.from.id]) {
-  if (message === "/exit") {
-    delete adminSessions[ctx.from.id];
-    return ctx.reply("✅ Admin-Modus beendet.");
-  }
-  ...
-}
+  // 🧩 Admin-Modus aktiv
+  if (adminSessions[ctx.from.id]) {
+    if (message === "/exit") {
+      delete adminSessions[ctx.from.id];
+      return ctx.reply("✅ Admin-Modus beendet.");
+    }
 
-
-    // Eintrag speichern
     try {
       if (message.startsWith("produkt:")) {
         const [key, value] = message.replace("produkt:", "").split("=");
@@ -90,7 +82,7 @@ if (adminSessions[ctx.from.id]) {
     }
   }
 
-  // 🧩 Schritt 1: Prüfen, ob Frage in Businessdaten vorkommt
+  // 🧩 Schritt 1: Datenbank prüfen
   for (const [produkt, antwort] of Object.entries(data.produkte)) {
     if (message.includes(produkt.toLowerCase())) {
       return ctx.reply(`🛍️ ${antwort}`);
@@ -102,35 +94,17 @@ if (adminSessions[ctx.from.id]) {
     }
   }
 
-  // 🧩 Schritt 2: Allgemeine Fragen mit ChatGPT verstehen
-const prompt = `
-Du bist ein smarter, freundlicher KI-Assistent eines Geschäfts.
-Du darfst nur auf allgemeine, neutrale Fragen antworten (z. B. Wochentag, Zeit, Wetter, Smalltalk).
-Wenn du unsicher bist oder die Frage nicht verstehst, formuliere sie klarer
-und frage höflich beim Nutzer nach, ob du sie richtig verstanden hast.
-Wenn die Frage geschäftlich ist (Produkte, Preise, Öffnungszeiten),
-sage höflich: "Diese Information habe ich nicht, bitte frage direkt beim Geschäft nach."
-Frage: "${message}"
-`;
+  // 🧩 Schritt 2: Allgemeine Fragen mit ChatGPT
+  try {
+    const prompt = `
+      Du bist ein smarter, höflicher KI-Assistent eines Geschäfts.
+      Es gibt zwei Regelarten:
+      1️⃣ Wenn die Frage allgemein ist (z. B. Wochentag, Zeit, Smalltalk, Wetter),
+          antworte kurz, klar und korrekt.
+          - Wenn nach dem Wochentag gefragt wird, nutze das heutige Datum (${new Date().toLocaleDateString("de-DE", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}).
+      2️⃣ Wenn die Frage geschäftlich ist (Produkte, Preise, Öffnungszeiten, Bestellungen usw.),
+          antworte NICHT selbst, sondern sage:
+          "Diese Information habe ich nicht, bitte frage direkt beim Geschäft nach."
 
-
-    const gptResponse = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [{ role: "user", content: prompt }],
-      max_tokens: 120,
-    });
-
-    const reply = gptResponse.choices[0].message.content.trim();
-    await ctx.reply(reply);
-  } catch (err) {
-    console.error("GPT-Fehler:", err);
-    await ctx.reply("⚠️ Entschuldigung, ich konnte das gerade nicht beantworten.");
-  }
-});
-
-// Serverstart
-process.once("SIGINT", () => bot.stop("SIGINT"));
-process.once("SIGTERM", () => bot.stop("SIGTERM"));
-bot.launch();
-app.get("/", (req, res) => res.send("🤖 Business-KI-Bot läuft"));
-app.listen(10000, () => console.log("🌐 Server läuft auf Port 10000"));
+      Wenn du die Frage nicht verstehst oder sie unklar ist:
+      - Formuliere si
