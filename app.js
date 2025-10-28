@@ -1,75 +1,128 @@
 import express from "express";
 import { Telegraf } from "telegraf";
-import OpenAI from "openai";
 import fs from "fs";
+import OpenAI from "openai";
 
 const app = express();
+const bot = new Telegraf(process.env.BOT_TOKEN);
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
-// 🔑 Bot & API Keys
-const BOT_TOKEN = process.env.BOT_TOKEN || "DEIN_TELEGRAM_TOKEN_HIER";
-const OPENAI_KEY = process.env.OPENAI_API_KEY || "DEIN_OPENAI_KEY_HIER";
+// Pfad zur Business-Datenbank
+const DATA_FILE = "./businessinfo.json";
 
-// 🧠 OpenAI Client
-const openai = new OpenAI({ apiKey: OPENAI_KEY });
-const bot = new Telegraf(BOT_TOKEN);
+// Wenn die Datei nicht existiert → leere Datei anlegen
+if (!fs.existsSync(DATA_FILE)) {
+  fs.writeFileSync(DATA_FILE, JSON.stringify({ produkte: {}, info: {} }, null, 2));
+}
 
-// 🗂 Speicherdatei
-const DATA_FILE = "./memory.json";
-if (!fs.existsSync(DATA_FILE)) fs.writeFileSync(DATA_FILE, JSON.stringify({}));
+// Hilfsfunktionen zum Laden/Speichern
+function loadData() {
+  return JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
+}
+function saveData(data) {
+  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+}
 
-const loadMemory = () => JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
-const saveMemory = (m) => fs.writeFileSync(DATA_FILE, JSON.stringify(m, null, 2));
+// Admin-Telegram-Benutzername
+const ADMIN_USERNAME = "laderakh";
 
-// 🧩 Startbefehl
-bot.start((ctx) => ctx.reply("👋 Hallo! Ich bin dein lernender KI-Bot."));
+// 🟢 Befehl: Start
+bot.start((ctx) => {
+  ctx.reply(
+    "👋 Hallo! Ich bin der Business-KI-Bot. Frag mich gern etwas über unsere Produkte oder Allgemeines!"
+  );
+});
 
-// 💬 Hauptlogik
+// 🟢 Befehl: Businessdaten bearbeiten (nur für Admin)
+bot.command("businessinfo", async (ctx) => {
+  const username = ctx.from.username;
+  if (username !== ADMIN_USERNAME) {
+    return ctx.reply("🚫 Nur der Geschäftsinhaber darf diesen Befehl verwenden.");
+  }
+
+  ctx.reply(
+    "🧾 Du bist im Admin-Modus.\nSchreibe im Format:\n`produkt: apfelsaft = 2.50 €`\noder\n`info: öffnungszeiten = Mo–Fr 8–18 Uhr`\nSchreibe `/exit`, um den Modus zu beenden."
+  );
+
+  // Speichert, dass dieser User gerade im Admin-Modus ist
+  bot.context.adminEditing = true;
+});
+
+// 🟡 Textnachrichten
 bot.on("text", async (ctx) => {
-  try {
-    const userText = ctx.message.text.trim();
-    const memory = loadMemory();
+  const username = ctx.from.username || "";
+  const message = ctx.message.text.toLowerCase().trim();
+  const data = loadData();
 
-    // Wenn der Nutzer gerade im Lehrmodus ist
-    if (memory._teaching && memory._teaching[ctx.from.id]) {
-      const intent = memory._teaching[ctx.from.id];
-      memory[intent] = userText;
-      delete memory._teaching[ctx.from.id];
-      saveMemory(memory);
-      await ctx.reply(`💾 Ich habe gelernt, wie ich auf "${intent}" antworten soll.`);
-      return;
+  // Wenn Admin im Bearbeitungsmodus ist
+  if (bot.context.adminEditing && username === ADMIN_USERNAME) {
+    if (message === "/exit") {
+      bot.context.adminEditing = false;
+      return ctx.reply("✅ Admin-Modus beendet.");
     }
 
-    // Schritt 1: ChatGPT sagt, was der Nutzer *meint*
-    const aiResp = await openai.chat.completions.create({
+    // Eintrag speichern
+    try {
+      if (message.startsWith("produkt:")) {
+        const [key, value] = message.replace("produkt:", "").split("=");
+        data.produkte[key.trim()] = value.trim();
+        saveData(data);
+        return ctx.reply(`💾 Produkt gespeichert: ${key.trim()} = ${value.trim()}`);
+      } else if (message.startsWith("info:")) {
+        const [key, value] = message.replace("info:", "").split("=");
+        data.info[key.trim()] = value.trim();
+        saveData(data);
+        return ctx.reply(`💾 Info gespeichert: ${key.trim()} = ${value.trim()}`);
+      } else {
+        return ctx.reply("⚠️ Bitte verwende das Format `produkt:` oder `info:`.");
+      }
+    } catch (err) {
+      console.error(err);
+      return ctx.reply("❌ Fehler beim Speichern.");
+    }
+  }
+
+  // 🧩 Schritt 1: Prüfen, ob Frage in Businessdaten vorkommt
+  for (const [produkt, antwort] of Object.entries(data.produkte)) {
+    if (message.includes(produkt.toLowerCase())) {
+      return ctx.reply(`🛍️ ${antwort}`);
+    }
+  }
+  for (const [info, antwort] of Object.entries(data.info)) {
+    if (message.includes(info.toLowerCase())) {
+      return ctx.reply(`ℹ️ ${antwort}`);
+    }
+  }
+
+  // 🧩 Schritt 2: Allgemeine Fragen mit ChatGPT verstehen
+  try {
+    const prompt = `
+      Du bist ein KI-Assistent für ein Geschäft.
+      Antworte nur auf allgemeine Fragen (z. B. Wochentag, Zeit, Wetter, Smalltalk).
+      Wenn die Frage sich auf Produkte, Preise oder Öffnungszeiten bezieht,
+      sage höflich: "Diese Information habe ich nicht, bitte frage direkt beim Geschäft nach."
+      Frage: "${message}"
+    `;
+
+    const gptResponse = await openai.chat.completions.create({
       model: "gpt-4o-mini",
-      messages: [
-        { role: "system", content: "Du bist ein Intent-Classifier. Sag nur das Thema oder die Bedeutung in 1-3 Wörtern." },
-        { role: "user", content: userText }
-      ]
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 120,
     });
 
-    const intent = aiResp.choices[0].message.content.toLowerCase().trim();
-
-    // Schritt 2: Prüfen, ob der Bot schon weiß, was zu tun ist
-    if (memory[intent]) {
-      await ctx.reply(memory[intent]);
-      return;
-    }
-
-    // Schritt 3: Wenn er das Thema nicht kennt → fragen
-    if (!memory._teaching) memory._teaching = {};
-    memory._teaching[ctx.from.id] = intent;
-    saveMemory(memory);
-    await ctx.reply(`Ich kenne "${intent}" noch nicht. Was soll ich darauf antworten?`);
-
+    const reply = gptResponse.choices[0].message.content.trim();
+    await ctx.reply(reply);
   } catch (err) {
-    console.error("❌ Fehler:", err);
-    await ctx.reply("⚠️ Es gab einen Fehler. Bitte versuch es nochmal!");
+    console.error("GPT-Fehler:", err);
+    await ctx.reply("⚠️ Entschuldigung, ich konnte das gerade nicht beantworten.");
   }
 });
 
-// 🌐 Server für Render
+// Serverstart
 bot.launch();
-app.get("/", (req, res) => res.send("🤖 Lernender Bot läuft!"));
+app.get("/", (req, res) => res.send("🤖 Business-KI-Bot läuft"));
 app.listen(10000, () => console.log("🌐 Server läuft auf Port 10000"));
+
 
