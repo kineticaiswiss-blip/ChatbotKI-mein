@@ -48,21 +48,23 @@ bot.start((ctx) => {
 });
 
 // === ADMIN BEFEHL ===
+const ADMIN_USERNAME = "laderakh"; // egal ob du LaderAKH oder laderakh nutzt
+
+// 🟢 Admin-Modus aktivieren
 bot.command("businessinfo", async (ctx) => {
-  const username = ctx.from.username;
-  if (username !== ADMIN_USERNAME) {
+  const username = (ctx.from.username || "").toLowerCase();
+  if (username !== ADMIN_USERNAME.toLowerCase()) {
     return ctx.reply("🚫 Nur der Geschäftsinhaber darf diesen Befehl verwenden.");
   }
 
-  adminSessions[ctx.from.id] = true;
+  adminSessions[ctx.from.id] = true; // Admin-Modus aktiv
   ctx.reply(
-    "🧾 Du bist im Admin-Modus.\n" +
-    "Beispiele:\n" +
-    "`produkt: apfelsaft = 2.50 €`\n" +
-    "`info: öffnungszeiten = Mo–Fr 8–18 Uhr`\n" +
-    "Schreibe `/exit`, um den Modus zu verlassen."
+    "🧾 Du bist jetzt im Admin-Modus.\n" +
+    "Schreibe im Format:\n`produkt: apfelsaft = 2.50 €`\noder\n`info: öffnungszeiten = Mo–Fr 8–18 Uhr`\n" +
+    "Schreibe `/exit`, um den Modus zu beenden."
   );
 });
+
 
 // === TEXT-NACHRICHTEN ===
 bot.on("text", async (ctx) => {
@@ -72,31 +74,33 @@ bot.on("text", async (ctx) => {
   const data = loadData();
 
   // --- ADMIN MODUS ---
-  if (adminSessions[userId] && username === ADMIN_USERNAME) {
-    if (message === "/exit") {
-      delete adminSessions[userId];
-      return ctx.reply("✅ Admin-Modus beendet.");
-    }
-
-    try {
-      if (message.startsWith("produkt:")) {
-        const [key, value] = message.replace("produkt:", "").split("=");
-        data.produkte[key.trim()] = value.trim();
-        saveData(data);
-        return ctx.reply(`💾 Produkt gespeichert: ${key.trim()} = ${value.trim()}`);
-      } else if (message.startsWith("info:")) {
-        const [key, value] = message.replace("info:", "").split("=");
-        data.info[key.trim()] = value.trim();
-        saveData(data);
-        return ctx.reply(`💾 Info gespeichert: ${key.trim()} = ${value.trim()}`);
-      } else {
-        return ctx.reply("⚠️ Bitte verwende das Format `produkt:` oder `info:`.");
-      }
-    } catch (err) {
-      console.error("Fehler beim Speichern:", err);
-      return ctx.reply("❌ Fehler beim Speichern.");
-    }
+ // --- ADMIN MODUS ---
+if (adminSessions[userId]) {
+  if (message === "/exit") {
+    delete adminSessions[userId];
+    return ctx.reply("✅ Admin-Modus beendet.");
   }
+
+  try {
+    if (message.startsWith("produkt:")) {
+      const [key, value] = message.replace("produkt:", "").split("=");
+      data.produkte[key.trim()] = value.trim();
+      saveData(data);
+      return ctx.reply(`💾 Produkt gespeichert: ${key.trim()} = ${value.trim()}`);
+    } else if (message.startsWith("info:")) {
+      const [key, value] = message.replace("info:", "").split("=");
+      data.info[key.trim()] = value.trim();
+      saveData(data);
+      return ctx.reply(`💾 Info gespeichert: ${key.trim()} = ${value.trim()}`);
+    } else {
+      return ctx.reply("⚠️ Bitte verwende das Format `produkt:` oder `info:`.");
+    }
+  } catch (err) {
+    console.error("Fehler beim Speichern:", err);
+    return ctx.reply("❌ Fehler beim Speichern.");
+  }
+}
+
 
   // --- KUNDE FRAGT NACH INFOS ---
   for (const [produkt, antwort] of Object.entries(data.produkte)) {
