@@ -13,9 +13,10 @@ const openai = new OpenAI({
 
 // === Dateien & Einstellungen ===
 const DATA_FILE = "./businessinfo.json";
-const ADMIN_USERNAME = "LaderAKH";
+const ADMIN_USERNAME = "laderakh"; // egal ob du LaderAKH oder laderakh nutzt
 const adminSessions = {}; // speichert wer gerade Admin-Modus aktiv hat
 
+// === Datei prüfen / erstellen ===
 if (!fs.existsSync(DATA_FILE)) {
   fs.writeFileSync(DATA_FILE, JSON.stringify({ produkte: {}, info: {} }, null, 2));
 }
@@ -48,11 +49,9 @@ bot.start((ctx) => {
 });
 
 // === ADMIN BEFEHL ===
-const ADMIN_USERNAME = "laderakh"; // egal ob du LaderAKH oder laderakh nutzt
-
-// 🟢 Admin-Modus aktivieren
 bot.command("businessinfo", async (ctx) => {
   const username = (ctx.from.username || "").toLowerCase();
+
   if (username !== ADMIN_USERNAME.toLowerCase()) {
     return ctx.reply("🚫 Nur der Geschäftsinhaber darf diesen Befehl verwenden.");
   }
@@ -65,52 +64,50 @@ bot.command("businessinfo", async (ctx) => {
   );
 });
 
-
 // === TEXT-NACHRICHTEN ===
 bot.on("text", async (ctx) => {
   const username = ctx.from.username || "";
   const userId = ctx.from.id;
-  const message = ctx.message.text.trim().toLowerCase();
+  const message = ctx.message.text.trim();
+  const messageLower = message.toLowerCase();
   const data = loadData();
 
   // --- ADMIN MODUS ---
- // --- ADMIN MODUS ---
-if (adminSessions[userId]) {
-  if (message === "/exit") {
-    delete adminSessions[userId];
-    return ctx.reply("✅ Admin-Modus beendet.");
-  }
-
-  try {
-    if (message.startsWith("produkt:")) {
-      const [key, value] = message.replace("produkt:", "").split("=");
-      data.produkte[key.trim()] = value.trim();
-      saveData(data);
-      return ctx.reply(`💾 Produkt gespeichert: ${key.trim()} = ${value.trim()}`);
-    } else if (message.startsWith("info:")) {
-      const [key, value] = message.replace("info:", "").split("=");
-      data.info[key.trim()] = value.trim();
-      saveData(data);
-      return ctx.reply(`💾 Info gespeichert: ${key.trim()} = ${value.trim()}`);
-    } else {
-      return ctx.reply("⚠️ Bitte verwende das Format `produkt:` oder `info:`.");
+  if (adminSessions[userId]) {
+    if (messageLower === "/exit") {
+      delete adminSessions[userId];
+      return ctx.reply("✅ Admin-Modus beendet.");
     }
-  } catch (err) {
-    console.error("Fehler beim Speichern:", err);
-    return ctx.reply("❌ Fehler beim Speichern.");
-  }
-}
 
+    try {
+      if (messageLower.startsWith("produkt:")) {
+        const [key, value] = message.replace(/produkt:/i, "").split("=");
+        data.produkte[key.trim()] = value.trim();
+        saveData(data);
+        return ctx.reply(`💾 Produkt gespeichert: ${key.trim()} = ${value.trim()}`);
+      } else if (messageLower.startsWith("info:")) {
+        const [key, value] = message.replace(/info:/i, "").split("=");
+        data.info[key.trim()] = value.trim();
+        saveData(data);
+        return ctx.reply(`💾 Info gespeichert: ${key.trim()} = ${value.trim()}`);
+      } else {
+        return ctx.reply("⚠️ Bitte verwende das Format `produkt:` oder `info:`.");
+      }
+    } catch (err) {
+      console.error("Fehler beim Speichern:", err);
+      return ctx.reply("❌ Fehler beim Speichern.");
+    }
+  }
 
   // --- KUNDE FRAGT NACH INFOS ---
   for (const [produkt, antwort] of Object.entries(data.produkte)) {
-    if (message.includes(produkt.toLowerCase())) {
+    if (messageLower.includes(produkt.toLowerCase())) {
       return ctx.reply(`🛍️ ${produkt}: ${antwort}`);
     }
   }
 
   for (const [info, antwort] of Object.entries(data.info)) {
-    if (message.includes(info.toLowerCase())) {
+    if (messageLower.includes(info.toLowerCase())) {
       return ctx.reply(`ℹ️ ${info}: ${antwort}`);
     }
   }
@@ -156,7 +153,7 @@ app.get("/", (req, res) => res.send("🤖 Business-KI-Bot läuft"));
 
 app.listen(PORT, () => console.log(`🌐 Server läuft auf Port ${PORT}`));
 
-// Sicheres Beenden
+// === Sicheres Beenden ===
 process.once("SIGINT", () => {
   console.log("🛑 Bot wird beendet (SIGINT)...");
   try { bot.stop("SIGINT"); } catch {}
@@ -165,3 +162,4 @@ process.once("SIGTERM", () => {
   console.log("🛑 Bot wird beendet (SIGTERM)...");
   try { bot.stop("SIGTERM"); } catch {}
 });
+
