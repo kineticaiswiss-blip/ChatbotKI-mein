@@ -21,8 +21,23 @@ if (!fs.existsSync(DATA_FILE)) {
 }
 
 function loadData() {
-  return JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
+  try {
+    const content = fs.readFileSync(DATA_FILE, "utf8").trim();
+    if (!content) {
+      console.warn("⚠️ businessinfo.json war leer – wird neu erstellt.");
+      const emptyData = { produkte: {}, info: {} };
+      saveData(emptyData);
+      return emptyData;
+    }
+    return JSON.parse(content);
+  } catch (err) {
+    console.error("❌ Fehler beim Laden der businessinfo.json:", err);
+    const fallback = { produkte: {}, info: {} };
+    saveData(fallback);
+    return fallback;
+  }
 }
+
 function saveData(data) {
   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
 }
