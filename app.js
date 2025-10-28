@@ -140,27 +140,21 @@ bot.on("text", async (ctx) => {
 // === SERVER START ===
 // === SERVER START ===
 const PORT = process.env.PORT || 10000;
-
-const RENDER_URL = "https://chatbotki-mein.onrender.com"; // Render-URL
+const RENDER_URL = "https://chatbotki-mein.onrender.com"; // deine Render-URL
 
 (async () => {
   try {
+    // 🟢 Statt Polling → Webhook aktivieren
     await bot.telegram.setWebhook(`${RENDER_URL}/bot${process.env.BOT_TOKEN}`);
+
     app.use(bot.webhookCallback(`/bot${process.env.BOT_TOKEN}`));
+
+    app.get("/", (req, res) => res.send("🤖 Business-KI-Bot läuft über Webhook!"));
+    app.listen(PORT, () => console.log(`🌐 Server läuft auf Port ${PORT}`));
+
     console.log("✅ Webhook erfolgreich gesetzt!");
   } catch (err) {
-    console.error("❌ Fehler beim Setzen des Webhooks:", err);
+    console.error("❌ Fehler beim Starten des Bots:", err);
   }
 })();
-
-app.get("/", (req, res) => res.send("🤖 Business-KI-Bot läuft"));
-app.listen(PORT, () => console.log(`🌐 Server läuft auf Port ${PORT}`));
-
-// Sicheres Beenden
-process.once("SIGINT", () => {
-  console.log("🛑 Bot wird beendet (SIGINT)...");
-});
-process.once("SIGTERM", () => {
-  console.log("🛑 Bot wird beendet (SIGTERM)...");
-});
 
