@@ -141,7 +141,7 @@ bot.on("text", async (ctx) => {
 // === SERVER START ===
 const PORT = process.env.PORT || 10000;
 
-const RENDER_URL = "https://chatbotki-mein.onrender.com; // Render-URL
+const RENDER_URL = "https://chatbotki-mein.onrender.com"; // Render-URL
 
 (async () => {
   try {
