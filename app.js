@@ -138,18 +138,26 @@ bot.on("text", async (ctx) => {
 
 // === SERVER START ===
 const PORT = process.env.PORT || 10000;
-const URL = process.env.RENDER_EXTERNAL_URL || "https://chatbotki-mein.onrender.com";
 
-bot.telegram.setWebhook(`${URL}/bot${process.env.BOT_TOKEN}`);
-app.use(bot.webhookCallback(`/bot${process.env.BOT_TOKEN}`));
+(async () => {
+  try {
+    await bot.launch();
+    console.log("🤖 Bot erfolgreich gestartet!");
+  } catch (err) {
+    console.error("❌ Fehler beim Starten des Bots:", err);
+  }
+})();
 
 app.get("/", (req, res) => res.send("🤖 Business-KI-Bot läuft"));
+
 app.listen(PORT, () => console.log(`🌐 Server läuft auf Port ${PORT}`));
 
-
-// Sauber beenden
-process.once("SIGINT", () => bot.stop("SIGINT"));
-process.once("SIGTERM", () => bot.stop("SIGTERM"));
-
-
-
+// Sicheres Beenden
+process.once("SIGINT", () => {
+  console.log("🛑 Bot wird beendet (SIGINT)...");
+  try { bot.stop("SIGINT"); } catch {}
+});
+process.once("SIGTERM", () => {
+  console.log("🛑 Bot wird beendet (SIGTERM)...");
+  try { bot.stop("SIGTERM"); } catch {}
+});
