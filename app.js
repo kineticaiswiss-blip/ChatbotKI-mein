@@ -157,5 +157,5 @@ const RENDER_URL = "https://chatbotki-mein.onrender.com"; // deine Render-URL
   }
 })();
 
-})();
+
 
