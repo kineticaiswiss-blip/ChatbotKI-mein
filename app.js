@@ -13,7 +13,7 @@ const openai = new OpenAI({
 
 // === Dateien & Einstellungen ===
 const DATA_FILE = "./businessinfo.json";
-const ADMIN_USERNAME = "laderakh";
+const ADMIN_USERNAME = "LaderAKH";
 const adminSessions = {}; // speichert wer gerade Admin-Modus aktiv hat
 
 if (!fs.existsSync(DATA_FILE)) {
