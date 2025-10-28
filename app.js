@@ -138,9 +138,15 @@ bot.on("text", async (ctx) => {
 
 // === SERVER START ===
 const PORT = process.env.PORT || 10000;
-bot.launch();
+const PORT = process.env.PORT || 10000;
+const URL = process.env.RENDER_EXTERNAL_URL || "https://chatbotki-mein.onrender.com";
+
+bot.telegram.setWebhook(`${URL}/bot${process.env.BOT_TOKEN}`);
+app.use(bot.webhookCallback(`/bot${process.env.BOT_TOKEN}`));
+
 app.get("/", (req, res) => res.send("🤖 Business-KI-Bot läuft"));
 app.listen(PORT, () => console.log(`🌐 Server läuft auf Port ${PORT}`));
+
 
 // Sauber beenden
 process.once("SIGINT", () => bot.stop("SIGINT"));
