@@ -59,8 +59,8 @@ bot.command("businessinfo", async (ctx) => {
   adminSessions[ctx.from.id] = true; // Admin-Modus aktiv
   ctx.reply(
     "🧾 Du bist jetzt im Admin-Modus.\n" +
-    "Schreibe im Format:\n`produkt: apfelsaft = 2.50 €`\noder\n`info: öffnungszeiten = Mo–Fr 8–18 Uhr`\n" +
-    "Schreibe `/exit`, um den Modus zu beenden."
+      "Schreibe im Format:\n`produkt: apfelsaft = 2.50 €`\noder\n`info: öffnungszeiten = Mo–Fr 8–18 Uhr`\n" +
+      "Schreibe `/exit`, um den Modus zu beenden."
   );
 });
 
@@ -138,7 +138,6 @@ bot.on("text", async (ctx) => {
 });
 
 // === SERVER START ===
-// === SERVER START ===
 const PORT = process.env.PORT || 10000;
 const RENDER_URL = "https://chatbotki-mein.onrender.com"; // deine Render-URL
 
@@ -156,5 +155,7 @@ const RENDER_URL = "https://chatbotki-mein.onrender.com"; // deine Render-URL
   } catch (err) {
     console.error("❌ Fehler beim Starten des Bots:", err);
   }
+})();
+
 })();
 
