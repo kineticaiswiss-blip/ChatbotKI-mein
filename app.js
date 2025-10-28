@@ -124,5 +124,3 @@ bot.on("text", async (ctx) => {
 bot.launch();
 app.get("/", (req, res) => res.send("🤖 Business-KI-Bot läuft"));
 app.listen(10000, () => console.log("🌐 Server läuft auf Port 10000"));
-
-
