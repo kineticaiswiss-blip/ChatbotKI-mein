@@ -12,11 +12,6 @@ if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
-const DATA_FILE = path.join(DATA_DIR, "businessinfo.json");
-const ADMIN_USERNAME = "laderakh".toLowerCase();
-const adminSessions = {};
-
-
 // === BOT & OPENAI Setup ===
 const bot = new Telegraf(process.env.BOT_TOKEN);
 const openai = new OpenAI({
