@@ -6,6 +6,7 @@
   "dependencies": {
     "express": "^4.19.2",
     "telegraf": "^4.16.3",
-    "openai": "^4.77.0"
+    "openai": "^4.77.0",
+    "string-similarity": "^4.0.4"
   }
 }
