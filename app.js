@@ -12,7 +12,7 @@ const openai = new OpenAI({
 });
 
 // === Dateien & Einstellungen ===
-const DATA_FILE = "./businessinfo.json";
+const DATA_FILE = "/data/businessinfo.json";
 const ADMIN_USERNAME = "laderakh".toLowerCase();
 const adminSessions = {};
 
