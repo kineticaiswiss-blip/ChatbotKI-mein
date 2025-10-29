@@ -6,11 +6,9 @@ import OpenAI from "openai";
 
 const app = express();
 
-// 🧩 Stelle sicher, dass der Ordner /data existiert
+// === Pfad zur persistenten Render-Disk ===
 const DATA_DIR = "/data";
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-}
+const DATA_FILE = path.join(DATA_DIR, "businessinfo.json");
 
 // === BOT & OPENAI Setup ===
 const bot = new Telegraf(process.env.BOT_TOKEN);
@@ -18,16 +16,17 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// === Dateien & Einstellungen ===
-const DATA_FILE = "/data/businessinfo.json";
+// === Admin-Einstellungen ===
 const ADMIN_USERNAME = "laderakh".toLowerCase();
 const adminSessions = {};
 
 // === Datei prüfen / erstellen ===
 if (!fs.existsSync(DATA_FILE)) {
+  console.log("🗂️ businessinfo.json nicht gefunden – wird erstellt...");
   fs.writeFileSync(DATA_FILE, JSON.stringify({ produkte: {}, info: {} }, null, 2));
 }
 
+// === Hilfsfunktionen ===
 function loadData() {
   try {
     const content = fs.readFileSync(DATA_FILE, "utf8").trim();
@@ -52,7 +51,7 @@ function saveData(data) {
 
 // === BOT START ===
 bot.start((ctx) => {
-  ctx.reply("👋 Hallo! Ich bin der Business-KI-Bot. Frag mich etwas über Produkte oder Allgemeines!");
+  ctx.reply("👋 Hallo! Ich bin der Business-KI-Bot. Frag mich etwas über Produkte oder Öffnungszeiten!");
 });
 
 // === ADMIN BEFEHL ===
@@ -106,32 +105,27 @@ bot.on("text", async (ctx) => {
     }
   }
 
-  // --- GPT erkennt, ob Frage zu gespeicherten Infos gehört ---
+  // --- GPT erkennt gespeicherte Begriffe ---
   try {
     const infoKeys = Object.keys(data.info);
     const produktKeys = Object.keys(data.produkte);
-
     const categories = [...infoKeys, ...produktKeys];
 
-    const prompt = `
-      Analysiere die Nutzerfrage und finde heraus, ob sie sich auf eine der folgenden Kategorien bezieht:
+    const gptPrompt = `
+      Analysiere die Nutzerfrage und bestimme, ob sie sich auf eine der folgenden Kategorien bezieht:
       ${categories.map((c) => `- ${c}`).join("\n")}
-
-      Antworte nur mit dem genauen Begriff aus der Liste, falls zutreffend.
-      Wenn keine Kategorie passt, antworte nur mit "none".
-
+      Antworte nur mit dem Begriff aus der Liste oder mit "none".
       Nutzerfrage: "${message}"
     `;
 
     const gptMatch = await openai.chat.completions.create({
       model: "gpt-4o-mini",
-      messages: [{ role: "user", content: prompt }],
+      messages: [{ role: "user", content: gptPrompt }],
       max_tokens: 20,
     });
 
     const matchedKey = gptMatch.choices[0].message.content.trim().toLowerCase();
 
-    // --- Falls GPT eine gespeicherte Kategorie erkannt hat ---
     if (matchedKey !== "none") {
       if (data.info[matchedKey]) {
         return ctx.reply(`ℹ️ ${matchedKey}: ${data.info[matchedKey]}`);
@@ -144,28 +138,25 @@ bot.on("text", async (ctx) => {
     console.error("Fehler bei GPT-Erkennung:", err);
   }
 
-  // --- Wenn keine gespeicherte Info passt → ChatGPT allgemeine Antwort ---
-  // === Allgemeine Fragen an ChatGPT (mit Datum & Tag) ===
-try {
-  const now = new Date();
-  const weekday = now.toLocaleDateString("de-DE", { weekday: "long" });
-  const dateStr = now.toLocaleDateString("de-DE");
+  // --- Allgemeine Fragen (mit Datum & Tag) ---
+  try {
+    const now = new Date();
+    const weekday = now.toLocaleDateString("de-DE", { weekday: "long" });
+    const dateStr = now.toLocaleDateString("de-DE");
 
-  const prompt = `
-    Du bist ein freundlicher digitaler Assistent eines Geschäfts.
-    Heutiges Datum: ${dateStr}
-    Heutiger Wochentag: ${weekday}
+    const prompt = `
+      Du bist ein freundlicher digitaler Assistent eines Geschäfts.
+      Heutiges Datum: ${dateStr}
+      Heutiger Wochentag: ${weekday}
 
-    Regeln:
-    - Beziehe dich auf den heutigen Tag, wenn der Nutzer nach "heute" fragt.
-    - Antworte höflich und kurz.
-    - Bei allgemeinen Fragen (z. B. Smalltalk, Datum, Uhrzeit) antworte normal.
-    - Bei geschäftlichen Fragen (Produkte, Öffnungszeiten, Preise) nutze gespeicherte Daten, wenn vorhanden.
-    - Wenn du etwas nicht weißt, sage freundlich: "Diese Information habe ich leider nicht, bitte frage direkt beim Geschäft nach."
+      Regeln:
+      - Beziehe dich auf den heutigen Tag, wenn der Nutzer nach "heute" fragt.
+      - Bei allgemeinen Fragen (z. B. Datum, Uhrzeit, Smalltalk) antworte normal.
+      - Wenn der Nutzer etwas Geschäftliches fragt, nutze gespeicherte Daten, falls vorhanden.
+      - Wenn du etwas nicht weißt, sage: "Diese Information habe ich leider nicht, bitte frage direkt beim Geschäft nach."
 
-    Nutzerfrage: "${message}"
-  `;
-
+      Nutzerfrage: "${message}"
+    `;
 
     const gptResponse = await openai.chat.completions.create({
       model: "gpt-4o-mini",
