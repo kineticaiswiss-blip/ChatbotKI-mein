@@ -13,8 +13,8 @@ const openai = new OpenAI({
 
 // === Dateien & Einstellungen ===
 const DATA_FILE = "./businessinfo.json";
-const ADMIN_USERNAME = "laderakh".toLowerCase(); // egal ob du LaderAKH oder laderakh nutzt
-const adminSessions = {}; // speichert wer gerade Admin-Modus aktiv hat
+const ADMIN_USERNAME = "laderakh".toLowerCase();
+const adminSessions = {};
 
 // === Datei prüfen / erstellen ===
 if (!fs.existsSync(DATA_FILE)) {
@@ -52,7 +52,7 @@ bot.start((ctx) => {
 bot.command("businessinfo", async (ctx) => {
   const username = (ctx.from.username || "").toLowerCase();
 
-  if (username !== ADMIN_USERNAME.toLowerCase()) {
+  if (username !== ADMIN_USERNAME) {
     return ctx.reply("🚫 Nur der Geschäftsinhaber darf diesen Befehl verwenden.");
   }
 
@@ -99,26 +99,51 @@ bot.on("text", async (ctx) => {
     }
   }
 
-  // --- KUNDE FRAGT NACH INFOS ---
-  for (const [produkt, antwort] of Object.entries(data.produkte)) {
-    if (messageLower.includes(produkt.toLowerCase())) {
-      return ctx.reply(`🛍️ ${produkt}: ${antwort}`);
+  // --- GPT erkennt, ob Frage zu gespeicherten Infos gehört ---
+  try {
+    const infoKeys = Object.keys(data.info);
+    const produktKeys = Object.keys(data.produkte);
+
+    const categories = [...infoKeys, ...produktKeys];
+
+    const prompt = `
+      Analysiere die Nutzerfrage und finde heraus, ob sie sich auf eine der folgenden Kategorien bezieht:
+      ${categories.map((c) => `- ${c}`).join("\n")}
+
+      Antworte nur mit dem genauen Begriff aus der Liste, falls zutreffend.
+      Wenn keine Kategorie passt, antworte nur mit "none".
+
+      Nutzerfrage: "${message}"
+    `;
+
+    const gptMatch = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 20,
+    });
+
+    const matchedKey = gptMatch.choices[0].message.content.trim().toLowerCase();
+
+    // --- Falls GPT eine gespeicherte Kategorie erkannt hat ---
+    if (matchedKey !== "none") {
+      if (data.info[matchedKey]) {
+        return ctx.reply(`ℹ️ ${matchedKey}: ${data.info[matchedKey]}`);
+      }
+      if (data.produkte[matchedKey]) {
+        return ctx.reply(`🛍️ ${matchedKey}: ${data.produkte[matchedKey]}`);
+      }
     }
+  } catch (err) {
+    console.error("Fehler bei GPT-Erkennung:", err);
   }
 
-  for (const [info, antwort] of Object.entries(data.info)) {
-    if (messageLower.includes(info.toLowerCase())) {
-      return ctx.reply(`ℹ️ ${info}: ${antwort}`);
-    }
-  }
-
-  // --- ALLE ANDEREN FRAGEN: CHATGPT ---
+  // --- Wenn keine gespeicherte Info passt → ChatGPT allgemeine Antwort ---
   try {
     const prompt = `
       Du bist ein höflicher, freundlicher Assistent eines Geschäfts.
-      - Antworte nur auf allgemeine Fragen (z. B. Wochentag, Uhrzeit, Smalltalk).
-      - Wenn du die Frage nicht verstehst, formuliere sie klarer und frage höflich nach.
-      - Wenn die Frage geschäftlich ist (Produkte, Preise, Öffnungszeiten),
+      - Antworte auf allgemeine Fragen freundlich (z. B. Wochentag, Uhrzeit, Smalltalk).
+      - Wenn du die Frage nicht verstehst, frage höflich nach.
+      - Wenn die Frage geschäftlich ist, aber keine gespeicherte Info vorhanden ist,
         sage: "Diese Information habe ich nicht, bitte frage direkt beim Geschäft nach."
       Nutzerfrage: "${message}"
     `;
@@ -139,13 +164,11 @@ bot.on("text", async (ctx) => {
 
 // === SERVER START ===
 const PORT = process.env.PORT || 10000;
-const RENDER_URL = "https://chatbotki-mein.onrender.com"; // deine Render-URL
+const RENDER_URL = "https://chatbotki-mein.onrender.com";
 
 (async () => {
   try {
-    // 🟢 Statt Polling → Webhook aktivieren
     await bot.telegram.setWebhook(`${RENDER_URL}/bot${process.env.BOT_TOKEN}`);
-
     app.use(bot.webhookCallback(`/bot${process.env.BOT_TOKEN}`));
 
     app.get("/", (req, res) => res.send("🤖 Business-KI-Bot läuft über Webhook!"));
@@ -156,6 +179,7 @@ const RENDER_URL = "https://chatbotki-mein.onrender.com"; // deine Render-URL
     console.error("❌ Fehler beim Starten des Bots:", err);
   }
 })();
+
 
 
 
