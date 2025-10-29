@@ -150,15 +150,27 @@ bot.on("text", async (ctx) => {
   }
 
   // --- Wenn keine gespeicherte Info passt → ChatGPT allgemeine Antwort ---
-  try {
-    const prompt = `
-      Du bist ein höflicher, freundlicher Assistent eines Geschäfts.
-      - Antworte auf allgemeine Fragen freundlich (z. B. Wochentag, Uhrzeit, Smalltalk).
-      - Wenn du die Frage nicht verstehst, frage höflich nach.
-      - Wenn die Frage geschäftlich ist, aber keine gespeicherte Info vorhanden ist,
-        sage: "Diese Information habe ich nicht, bitte frage direkt beim Geschäft nach."
-      Nutzerfrage: "${message}"
-    `;
+  // === Allgemeine Fragen an ChatGPT (mit Datum & Tag) ===
+try {
+  const now = new Date();
+  const weekday = now.toLocaleDateString("de-DE", { weekday: "long" });
+  const dateStr = now.toLocaleDateString("de-DE");
+
+  const prompt = `
+    Du bist ein freundlicher digitaler Assistent eines Geschäfts.
+    Heutiges Datum: ${dateStr}
+    Heutiger Wochentag: ${weekday}
+
+    Regeln:
+    - Beziehe dich auf den heutigen Tag, wenn der Nutzer nach "heute" fragt.
+    - Antworte höflich und kurz.
+    - Bei allgemeinen Fragen (z. B. Smalltalk, Datum, Uhrzeit) antworte normal.
+    - Bei geschäftlichen Fragen (Produkte, Öffnungszeiten, Preise) nutze gespeicherte Daten, wenn vorhanden.
+    - Wenn du etwas nicht weißt, sage freundlich: "Diese Information habe ich leider nicht, bitte frage direkt beim Geschäft nach."
+
+    Nutzerfrage: "${message}"
+  `;
+
 
     const gptResponse = await openai.chat.completions.create({
       model: "gpt-4o-mini",
