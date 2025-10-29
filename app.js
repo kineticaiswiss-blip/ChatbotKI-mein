@@ -1,9 +1,21 @@
 import express from "express";
 import { Telegraf } from "telegraf";
 import fs from "fs";
+import path from "path";
 import OpenAI from "openai";
 
 const app = express();
+
+// 🧩 Stelle sicher, dass der Ordner /data existiert
+const DATA_DIR = "/data";
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+
+const DATA_FILE = path.join(DATA_DIR, "businessinfo.json");
+const ADMIN_USERNAME = "laderakh".toLowerCase();
+const adminSessions = {};
+
 
 // === BOT & OPENAI Setup ===
 const bot = new Telegraf(process.env.BOT_TOKEN);
