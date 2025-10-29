@@ -8,7 +8,23 @@ const app = express();
 
 // === Pfad zur persistenten Render-Disk ===
 const DATA_DIR = "/data";
-const DATA_FILE = path.join(DATA_DIR, "businessinfo.json");
+
+// ✅ Stelle sicher, dass der Ordner /data existiert
+try {
+  if (!fs.existsSync(DATA_DIR)) {
+    console.log("📁 Erstelle Datenverzeichnis:", DATA_DIR);
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+} catch (err) {
+  console.error("⚠️ Konnte /data nicht erstellen:", err);
+}
+
+// === Datei-Pfad definieren (mit Fallback) ===
+const DATA_FILE = fs.existsSync(DATA_DIR)
+  ? path.join(DATA_DIR, "businessinfo.json")
+  : path.join(process.cwd(), "businessinfo.json");
+
+console.log("💾 Daten werden gespeichert in:", DATA_FILE);
 
 // === BOT & OPENAI Setup ===
 const bot = new Telegraf(process.env.BOT_TOKEN);
@@ -25,6 +41,7 @@ if (!fs.existsSync(DATA_FILE)) {
   console.log("🗂️ businessinfo.json nicht gefunden – wird erstellt...");
   fs.writeFileSync(DATA_FILE, JSON.stringify({ produkte: {}, info: {} }, null, 2));
 }
+
 
 // === Hilfsfunktionen ===
 function loadData() {
