@@ -39,7 +39,7 @@ const adminSessions = {};
 // === Datei prüfen / erstellen ===
 if (!fs.existsSync(DATA_FILE)) {
   console.log("🗂️ businessinfo.json nicht gefunden – wird erstellt...");
-  fs.writeFileSync(DATA_FILE, JSON.stringify({ produkte: {}, info: {} }, null, 2));
+  fs.writeFileSync(DATA_FILE, JSON.stringify({}, null, 2));
 }
 
 // === Hilfsfunktionen ===
@@ -48,14 +48,14 @@ function loadData() {
     const content = fs.readFileSync(DATA_FILE, "utf8").trim();
     if (!content) {
       console.warn("⚠️ businessinfo.json war leer – wird neu erstellt.");
-      const emptyData = { produkte: {}, info: {} };
+      const emptyData = {};
       saveData(emptyData);
       return emptyData;
     }
     return JSON.parse(content);
   } catch (err) {
     console.error("❌ Fehler beim Laden der businessinfo.json:", err);
-    const fallback = { produkte: {}, info: {} };
+    const fallback = {};
     saveData(fallback);
     return fallback;
   }
@@ -67,7 +67,7 @@ function saveData(data) {
 
 // === BOT START ===
 bot.start((ctx) => {
-  ctx.reply("👋 Hallo! Ich bin der Business-KI-Bot. Frag mich etwas über Produkte oder Öffnungszeiten!");
+  ctx.reply("👋 Hallo! Ich bin der Business-KI-Bot. Frag mich etwas über Produkte, Preise oder Öffnungszeiten!");
 });
 
 // === ADMIN BEFEHL ===
@@ -81,8 +81,11 @@ bot.command("businessinfo", async (ctx) => {
   adminSessions[ctx.from.id] = true; // Admin-Modus aktiv
   ctx.reply(
     "🧾 Du bist jetzt im Admin-Modus.\n" +
-      "Schreibe im Format:\n`produkt: apfelsaft = 2.50 €`\noder\n`info: öffnungszeiten = Mo–Fr 8–18 Uhr`\n" +
-      "Schreibe `/exit`, um den Modus zu beenden."
+      "Schreibe einfach z. B.:\n" +
+      "`preis chatbot = 1200€`\n" +
+      "`öffnungszeiten = Mo–Fr 8–18 Uhr`\n" +
+      "`adresse = Musterstraße 1, Zürich`\n" +
+      "oder `/exit`, um den Modus zu beenden."
   );
 });
 
@@ -102,59 +105,51 @@ bot.on("text", async (ctx) => {
     }
 
     try {
-      if (messageLower.startsWith("produkt:")) {
-        const [key, value] = message.replace(/produkt:/i, "").split("=");
-        data.produkte[key.trim()] = value.trim();
+      // ✅ Universelles Speicherformat (key = value)
+      const match = message.match(/^(.+?)\s*=\s*(.+)$/);
+      if (match) {
+        const key = match[1].trim().toLowerCase();
+        const value = match[2].trim();
+        data[key] = value;
         saveData(data);
-        return ctx.reply(`💾 Produkt gespeichert: ${key.trim()} = ${value.trim()}`);
-      } else if (messageLower.startsWith("info:")) {
-        const [key, value] = message.replace(/info:/i, "").split("=");
-        data.info[key.trim()] = value.trim();
-        saveData(data);
-        return ctx.reply(`💾 Info gespeichert: ${key.trim()} = ${value.trim()}`);
+        return ctx.reply(`💾 Gespeichert: ${key} = ${value}`);
       } else {
-        return ctx.reply("⚠️ Bitte verwende das Format `produkt:` oder `info:`.");
+        return ctx.reply("⚠️ Bitte verwende das Format `schlüssel = wert`.");
       }
     } catch (err) {
-      console.error("Fehler beim Speichern:", err);
+      console.error("❌ Fehler beim Speichern:", err);
       return ctx.reply("❌ Fehler beim Speichern.");
     }
   }
 
   // --- GPT erkennt gespeicherte Begriffe ---
   try {
-    const infoKeys = Object.keys(data.info);
-    const produktKeys = Object.keys(data.produkte);
-    const categories = [...infoKeys, ...produktKeys];
+    const keys = Object.keys(data);
+    if (keys.length > 0) {
+      const gptPrompt = `
+        Analysiere die Nutzerfrage und bestimme, ob sie sich auf eine der folgenden gespeicherten Informationen bezieht:
+        ${keys.map((c) => `- ${c}`).join("\n")}
+        Antworte nur mit einem Begriff aus der Liste oder mit "none".
+        Nutzerfrage: "${message}"
+      `;
 
-    const gptPrompt = `
-      Analysiere die Nutzerfrage und bestimme, ob sie sich auf eine der folgenden Kategorien bezieht:
-      ${categories.map((c) => `- ${c}`).join("\n")}
-      Antworte nur mit dem Begriff aus der Liste oder mit "none".
-      Nutzerfrage: "${message}"
-    `;
+      const gptMatch = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [{ role: "user", content: gptPrompt }],
+        max_tokens: 20,
+      });
 
-    const gptMatch = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [{ role: "user", content: gptPrompt }],
-      max_tokens: 20,
-    });
+      const matchedKey = gptMatch.choices[0].message.content.trim().toLowerCase();
 
-    const matchedKey = gptMatch.choices[0].message.content.trim().toLowerCase();
-
-    if (matchedKey !== "none") {
-      if (data.info[matchedKey]) {
-        return ctx.reply(`ℹ️ ${matchedKey}: ${data.info[matchedKey]}`);
-      }
-      if (data.produkte[matchedKey]) {
-        return ctx.reply(`🛍️ ${matchedKey}: ${data.produkte[matchedKey]}`);
+      if (matchedKey !== "none" && data[matchedKey]) {
+        return ctx.reply(`💡 ${matchedKey}: ${data[matchedKey]}`);
       }
     }
   } catch (err) {
-    console.error("Fehler bei GPT-Erkennung:", err);
+    console.error("⚠️ Fehler bei GPT-Erkennung:", err);
   }
 
-  // --- Allgemeine Fragen (mit Datum & Tag) ---
+  // --- Allgemeine Fragen (Datum, Smalltalk etc.) ---
   try {
     const now = new Date();
     const weekday = now.toLocaleDateString("de-DE", { weekday: "long" });
@@ -163,13 +158,17 @@ bot.on("text", async (ctx) => {
     const prompt = `
       Du bist ein freundlicher digitaler Assistent eines Geschäfts.
       Heutiges Datum: ${dateStr}
-      Heutiger Wochentag: ${weekday}
+      Wochentag: ${weekday}
 
       Regeln:
-      - Beziehe dich auf den heutigen Tag, wenn der Nutzer nach "heute" fragt.
-      - Bei allgemeinen Fragen (z. B. Datum, Uhrzeit, Smalltalk) antworte normal.
-      - Wenn der Nutzer etwas Geschäftliches fragt, nutze gespeicherte Daten, falls vorhanden.
+      - Nutze gespeicherte Daten (${Object.keys(data).length} Einträge), wenn sie relevant sind.
+      - Falls der Nutzer etwas über "heute" fragt, beziehe dich auf den heutigen Tag (${weekday}).
       - Wenn du etwas nicht weißt, sage: "Diese Information habe ich leider nicht, bitte frage direkt beim Geschäft nach."
+
+      Gespeicherte Informationen:
+      ${Object.entries(data)
+        .map(([k, v]) => `${k}: ${v}`)
+        .join("\n")}
 
       Nutzerfrage: "${message}"
     `;
@@ -177,13 +176,13 @@ bot.on("text", async (ctx) => {
     const gptResponse = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [{ role: "user", content: prompt }],
-      max_tokens: 120,
+      max_tokens: 150,
     });
 
     const reply = gptResponse.choices[0].message.content.trim();
     await ctx.reply(reply);
   } catch (err) {
-    console.error("GPT-Fehler:", err);
+    console.error("❌ GPT-Fehler:", err);
     await ctx.reply("⚠️ Entschuldigung, ich konnte das gerade nicht beantworten.");
   }
 });
@@ -215,6 +214,7 @@ const RENDER_URL = "https://chatbotki-mein.onrender.com";
     console.error("❌ Fehler beim Starten des Bots:", err);
   }
 })();
+
 
 
 
