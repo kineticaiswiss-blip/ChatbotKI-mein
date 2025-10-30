@@ -42,7 +42,6 @@ if (!fs.existsSync(DATA_FILE)) {
   fs.writeFileSync(DATA_FILE, JSON.stringify({ produkte: {}, info: {} }, null, 2));
 }
 
-
 // === Hilfsfunktionen ===
 function loadData() {
   try {
@@ -202,10 +201,21 @@ const RENDER_URL = "https://chatbotki-mein.onrender.com";
     app.listen(PORT, () => console.log(`🌐 Server läuft auf Port ${PORT}`));
 
     console.log("✅ Webhook erfolgreich gesetzt!");
+
+    // === Persistenz-Test ===
+    const testFile = path.join(DATA_DIR, "persistenztest.txt");
+    try {
+      fs.writeFileSync(testFile, `Test gespeichert am ${new Date().toISOString()}\n`, { flag: "a" });
+      console.log("✅ Persistenz-Test erfolgreich: Datei geschrieben ->", testFile);
+    } catch (err) {
+      console.error("❌ Persistenz-Test FEHLER:", err);
+    }
+
   } catch (err) {
     console.error("❌ Fehler beim Starten des Bots:", err);
   }
 })();
+
 
 
 
