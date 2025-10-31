@@ -70,7 +70,7 @@ bot.start((ctx) => {
   ctx.reply("👋 Hallo! Ich bin der Business-KI-Bot. Frag mich etwas über Produkte, Preise oder Öffnungszeiten!");
 });
 
-// === ADMIN BEFEHL ===
+// === ADMIN BEFEHL: businessinfo ===
 bot.command("businessinfo", async (ctx) => {
   const username = (ctx.from.username || "").toLowerCase();
 
@@ -81,21 +81,51 @@ bot.command("businessinfo", async (ctx) => {
   adminSessions[ctx.from.id] = true; // Admin-Modus aktiv
   ctx.reply(
     "🧾 Du bist jetzt im Admin-Modus.\n" +
-      "Schreibe einfach z. B.:\n" +
+      "Schreibe z. B.:\n" +
       "`preis chatbot = 1200€`\n" +
       "`öffnungszeiten = Mo–Fr 8–18 Uhr`\n" +
       "`adresse = Musterstraße 1, Zürich`\n" +
-      "oder `/exit`, um den Modus zu beenden."
+      "oder `/exit`, um den Modus zu beenden.\n\n" +
+      "📦 Oder nutze `/data`, um alle gespeicherten Daten als JSON zu sehen oder zu bearbeiten."
+  );
+});
+
+// === ADMIN BEFEHL: /data ===
+bot.command("data", async (ctx) => {
+  const username = (ctx.from.username || "").toLowerCase();
+  if (username !== ADMIN_USERNAME) {
+    return ctx.reply("🚫 Nur der Geschäftsinhaber darf diesen Befehl verwenden.");
+  }
+
+  const data = loadData();
+  ctx.reply(
+    "🧾 Aktuelle gespeicherte Daten:\n\n" +
+      "```json\n" +
+      JSON.stringify(data, null, 2) +
+      "\n```\n" +
+      "✏️ Du kannst diese JSON kopieren, bearbeiten und **im Admin-Modus** zurückschicken.\n" +
+      "Ich aktualisiere dann alles automatisch."
   );
 });
 
 // === TEXT-NACHRICHTEN ===
 bot.on("text", async (ctx) => {
-  const username = ctx.from.username || "";
+  const username = (ctx.from.username || "").toLowerCase();
   const userId = ctx.from.id;
   const message = ctx.message.text.trim();
   const messageLower = message.toLowerCase();
   const data = loadData();
+
+  // === Nur im Admin-Modus: vollständige JSON erlaubt ===
+  if (adminSessions[userId] && message.startsWith("{") && message.endsWith("}")) {
+    try {
+      const parsed = JSON.parse(message);
+      saveData(parsed);
+      return ctx.reply("✅ Alle Daten wurden erfolgreich aktualisiert und gespeichert.");
+    } catch (err) {
+      return ctx.reply("⚠️ Das war keine gültige JSON-Struktur. Bitte überprüfe die Formatierung.");
+    }
+  }
 
   // --- ADMIN MODUS ---
   if (adminSessions[userId]) {
@@ -105,7 +135,6 @@ bot.on("text", async (ctx) => {
     }
 
     try {
-      // ✅ Universelles Speicherformat (key = value)
       const match = message.match(/^(.+?)\s*=\s*(.+)$/);
       if (match) {
         const key = match[1].trim().toLowerCase();
@@ -114,7 +143,7 @@ bot.on("text", async (ctx) => {
         saveData(data);
         return ctx.reply(`💾 Gespeichert: ${key} = ${value}`);
       } else {
-        return ctx.reply("⚠️ Bitte verwende das Format `schlüssel = wert`.");
+        return ctx.reply("⚠️ Bitte verwende das Format `schlüssel = wert` oder sende eine gültige JSON.");
       }
     } catch (err) {
       console.error("❌ Fehler beim Speichern:", err);
@@ -214,6 +243,7 @@ const RENDER_URL = "https://chatbotki-mein.onrender.com";
     console.error("❌ Fehler beim Starten des Bots:", err);
   }
 })();
+
 
 
 
