@@ -10,21 +10,54 @@ const app = express();
 const DATA_DIR = "/data";
 
 // ✅ Stelle sicher, dass der Ordner /data existiert
-try {
-  if (!fs.existsSync(DATA_DIR)) {
-    console.log("📁 Erstelle Datenverzeichnis:", DATA_DIR);
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-  }
-} catch (err) {
-  console.error("⚠️ Konnte /data nicht erstellen:", err);
+if (!fs.existsSync(DATA_DIR)) {
+  console.log("📁 Erstelle Datenverzeichnis:", DATA_DIR);
+  fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
-// === Datei-Pfad definieren (mit Fallback) ===
-const DATA_FILE = fs.existsSync(DATA_DIR)
-  ? path.join(DATA_DIR, "businessinfo.json")
-  : path.join(process.cwd(), "businessinfo.json");
+// === Datei für Textdaten ===
+const DATA_TEXT_FILE = path.join(DATA_DIR, "businessinfo.txt");
+console.log("💾 Textdaten werden gespeichert in:", DATA_TEXT_FILE);
 
-console.log("💾 Daten werden gespeichert in:", DATA_FILE);
+// Falls Datei fehlt, mit Standard-Template anlegen
+if (!fs.existsSync(DATA_TEXT_FILE)) {
+  const defaultText = `Produkte:
+ChattbotKI, SocialmediaKI
+
+Preise:
+ChattbotKI = 1000.- monatlich
+SocialmediaKI = 450.- bis 1200.- monatlich
+
+Produktinfos:
+ChattbotKI = KI-gestützter Chatbot für Unternehmen
+SocialmediaKI = Automatisierte Social-Media-Inhalte und Planung
+
+Telefonsupport:
+Telefonnummer = 1234567890
+Verfügbar = Mo–Fr, 9–17 Uhr
+`;
+  fs.writeFileSync(DATA_TEXT_FILE, defaultText, "utf8");
+  console.log("🗂️ businessinfo.txt erstellt.");
+}
+
+// === Hilfsfunktionen ===
+function loadTextData() {
+  try {
+    return fs.readFileSync(DATA_TEXT_FILE, "utf8").trim();
+  } catch (err) {
+    console.error("❌ Fehler beim Laden von businessinfo.txt:", err);
+    return "";
+  }
+}
+
+function saveTextData(text) {
+  try {
+    fs.writeFileSync(DATA_TEXT_FILE, text, "utf8");
+    console.log("💾 Textdaten gespeichert.");
+  } catch (err) {
+    console.error("❌ Fehler beim Speichern:", err);
+  }
+}
 
 // === BOT & OPENAI Setup ===
 const bot = new Telegraf(process.env.BOT_TOKEN);
@@ -36,57 +69,23 @@ const openai = new OpenAI({
 const ADMIN_USERNAME = "laderakh".toLowerCase();
 const adminSessions = {};
 
-// === Datei prüfen / erstellen ===
-if (!fs.existsSync(DATA_FILE)) {
-  console.log("🗂️ businessinfo.json nicht gefunden – wird erstellt...");
-  fs.writeFileSync(DATA_FILE, JSON.stringify({}, null, 2));
-}
-
-// === Hilfsfunktionen ===
-function loadData() {
-  try {
-    const content = fs.readFileSync(DATA_FILE, "utf8").trim();
-    if (!content) {
-      console.warn("⚠️ businessinfo.json war leer – wird neu erstellt.");
-      const emptyData = {};
-      saveData(emptyData);
-      return emptyData;
-    }
-    return JSON.parse(content);
-  } catch (err) {
-    console.error("❌ Fehler beim Laden der businessinfo.json:", err);
-    const fallback = {};
-    saveData(fallback);
-    return fallback;
-  }
-}
-
-function saveData(data) {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
-}
-
 // === BOT START ===
 bot.start((ctx) => {
   ctx.reply("👋 Hallo! Ich bin der Business-KI-Bot. Frag mich etwas über Produkte, Preise oder Öffnungszeiten!");
 });
 
-// === ADMIN BEFEHL: businessinfo ===
+// === ADMIN BEFEHL: /businessinfo ===
 bot.command("businessinfo", async (ctx) => {
   const username = (ctx.from.username || "").toLowerCase();
-
   if (username !== ADMIN_USERNAME) {
     return ctx.reply("🚫 Nur der Geschäftsinhaber darf diesen Befehl verwenden.");
   }
 
-  adminSessions[ctx.from.id] = true; // Admin-Modus aktiv
+  adminSessions[ctx.from.id] = true;
   ctx.reply(
     "🧾 Du bist jetzt im Admin-Modus.\n" +
-      "Schreibe z. B.:\n" +
-      "`preis chatbot = 1200€`\n" +
-      "`öffnungszeiten = Mo–Fr 8–18 Uhr`\n" +
-      "`adresse = Musterstraße 1, Zürich`\n" +
-      "oder `/exit`, um den Modus zu beenden.\n\n" +
-      "📦 Oder nutze `/data`, um alle gespeicherten Daten als JSON zu sehen oder zu bearbeiten."
+      "Du kannst die Businessdaten mit `/data` ansehen, kopieren, bearbeiten und zurückschicken.\n" +
+      "Mit `/exit` verlässt du den Admin-Modus."
   );
 });
 
@@ -97,14 +96,14 @@ bot.command("data", async (ctx) => {
     return ctx.reply("🚫 Nur der Geschäftsinhaber darf diesen Befehl verwenden.");
   }
 
-  const data = loadData();
+  const textData = loadTextData();
   ctx.reply(
-    "🧾 Aktuelle gespeicherte Daten:\n\n" +
-      "```json\n" +
-      JSON.stringify(data, null, 2) +
+    "🧾 Aktuell gespeicherte Business-Infos:\n\n" +
+      "```text\n" +
+      textData +
       "\n```\n" +
-      "✏️ Du kannst diese JSON kopieren, bearbeiten und **im Admin-Modus** zurückschicken.\n" +
-      "Ich aktualisiere dann alles automatisch."
+      "✏️ Du kannst diesen Text kopieren, bearbeiten und **im Admin-Modus** zurückschicken.\n" +
+      "Ich speichere ihn dann dauerhaft in `/data/businessinfo.txt`."
   );
 });
 
@@ -113,99 +112,47 @@ bot.on("text", async (ctx) => {
   const username = (ctx.from.username || "").toLowerCase();
   const userId = ctx.from.id;
   const message = ctx.message.text.trim();
-  const messageLower = message.toLowerCase();
-  const data = loadData();
 
-  // === Nur im Admin-Modus: vollständige JSON erlaubt ===
-  if (adminSessions[userId] && message.startsWith("{") && message.endsWith("}")) {
-    try {
-      const parsed = JSON.parse(message);
-      saveData(parsed);
-      return ctx.reply("✅ Alle Daten wurden erfolgreich aktualisiert und gespeichert.");
-    } catch (err) {
-      return ctx.reply("⚠️ Das war keine gültige JSON-Struktur. Bitte überprüfe die Formatierung.");
+  // === ADMIN FUNKTION: bearbeiteter Text ===
+  if (adminSessions[userId] && message.includes(":")) {
+    // Prüfen ob es formatiert ist
+    const looksLikeFormattedData = message.match(/^[A-Za-zäöüÄÖÜß ]+:/m);
+    if (looksLikeFormattedData) {
+      saveTextData(message);
+      return ctx.reply("✅ Alle Business-Infos wurden erfolgreich aktualisiert und dauerhaft gespeichert.");
     }
   }
 
-  // --- ADMIN MODUS ---
-  if (adminSessions[userId]) {
-    if (messageLower === "/exit") {
-      delete adminSessions[userId];
-      return ctx.reply("✅ Admin-Modus beendet.");
-    }
-
-    try {
-      const match = message.match(/^(.+?)\s*=\s*(.+)$/);
-      if (match) {
-        const key = match[1].trim().toLowerCase();
-        const value = match[2].trim();
-        data[key] = value;
-        saveData(data);
-        return ctx.reply(`💾 Gespeichert: ${key} = ${value}`);
-      } else {
-        return ctx.reply("⚠️ Bitte verwende das Format `schlüssel = wert` oder sende eine gültige JSON.");
-      }
-    } catch (err) {
-      console.error("❌ Fehler beim Speichern:", err);
-      return ctx.reply("❌ Fehler beim Speichern.");
-    }
+  // === ADMIN BEFEHL /exit ===
+  if (adminSessions[userId] && message.toLowerCase() === "/exit") {
+    delete adminSessions[userId];
+    return ctx.reply("✅ Admin-Modus beendet.");
   }
 
-  // --- GPT erkennt gespeicherte Begriffe ---
+  // === NORMALER NUTZER: GPT-Antwort ===
+  const textData = loadTextData();
+
+  const prompt = `
+Du bist ein digitaler Assistent eines Unternehmens. Antworte auf Nutzerfragen mithilfe der gespeicherten Informationen unten.
+
+Gespeicherte Informationen:
+${textData}
+
+Wenn der Nutzer eine unklare Frage stellt, bitte ihn höflich, zu präzisieren, ob er etwas zu einem der folgenden Themen wissen möchte:
+${textData
+  .split("\n")
+  .filter((line) => line.endsWith(":"))
+  .map((line) => "- " + line.replace(":", ""))
+  .join("\n")}
+
+Nutzerfrage: "${message}"
+`;
+
   try {
-    const keys = Object.keys(data);
-    if (keys.length > 0) {
-      const gptPrompt = `
-        Analysiere die Nutzerfrage und bestimme, ob sie sich auf eine der folgenden gespeicherten Informationen bezieht:
-        ${keys.map((c) => `- ${c}`).join("\n")}
-        Antworte nur mit einem Begriff aus der Liste oder mit "none".
-        Nutzerfrage: "${message}"
-      `;
-
-      const gptMatch = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [{ role: "user", content: gptPrompt }],
-        max_tokens: 20,
-      });
-
-      const matchedKey = gptMatch.choices[0].message.content.trim().toLowerCase();
-
-      if (matchedKey !== "none" && data[matchedKey]) {
-        return ctx.reply(`💡 ${matchedKey}: ${data[matchedKey]}`);
-      }
-    }
-  } catch (err) {
-    console.error("⚠️ Fehler bei GPT-Erkennung:", err);
-  }
-
-  // --- Allgemeine Fragen (Datum, Smalltalk etc.) ---
-  try {
-    const now = new Date();
-    const weekday = now.toLocaleDateString("de-DE", { weekday: "long" });
-    const dateStr = now.toLocaleDateString("de-DE");
-
-    const prompt = `
-      Du bist ein freundlicher digitaler Assistent eines Geschäfts.
-      Heutiges Datum: ${dateStr}
-      Wochentag: ${weekday}
-
-      Regeln:
-      - Nutze gespeicherte Daten (${Object.keys(data).length} Einträge), wenn sie relevant sind.
-      - Falls der Nutzer etwas über "heute" fragt, beziehe dich auf den heutigen Tag (${weekday}).
-      - Wenn du etwas nicht weißt, sage: "Diese Information habe ich leider nicht, bitte frage direkt beim Geschäft nach."
-
-      Gespeicherte Informationen:
-      ${Object.entries(data)
-        .map(([k, v]) => `${k}: ${v}`)
-        .join("\n")}
-
-      Nutzerfrage: "${message}"
-    `;
-
     const gptResponse = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [{ role: "user", content: prompt }],
-      max_tokens: 150,
+      max_tokens: 200,
     });
 
     const reply = gptResponse.choices[0].message.content.trim();
@@ -232,17 +179,14 @@ const RENDER_URL = "https://chatbotki-mein.onrender.com";
 
     // === Persistenz-Test ===
     const testFile = path.join(DATA_DIR, "persistenztest.txt");
-    try {
-      fs.writeFileSync(testFile, `Test gespeichert am ${new Date().toISOString()}\n`, { flag: "a" });
-      console.log("✅ Persistenz-Test erfolgreich: Datei geschrieben ->", testFile);
-    } catch (err) {
-      console.error("❌ Persistenz-Test FEHLER:", err);
-    }
+    fs.writeFileSync(testFile, `Test gespeichert am ${new Date().toISOString()}\n`, { flag: "a" });
+    console.log("✅ Persistenz-Test erfolgreich: Datei geschrieben ->", testFile);
 
   } catch (err) {
     console.error("❌ Fehler beim Starten des Bots:", err);
   }
 })();
+
 
 
 
