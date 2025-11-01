@@ -5,187 +5,192 @@ import path from "path";
 import OpenAI from "openai";
 
 const app = express();
+app.use(express.json());
 
-// === Pfad zur persistenten Render-Disk ===
+// === WICHTIG: Datenstruktur vorbereiten ===
 const DATA_DIR = "/data";
+const CUSTOMERS_DIR = path.join(DATA_DIR, "customers");
 
-// ✅ Stelle sicher, dass der Ordner /data existiert
-if (!fs.existsSync(DATA_DIR)) {
-  console.log("📁 Erstelle Datenverzeichnis:", DATA_DIR);
-  fs.mkdirSync(DATA_DIR, { recursive: true });
+if (!fs.existsSync(CUSTOMERS_DIR)) {
+  fs.mkdirSync(CUSTOMERS_DIR, { recursive: true });
+  console.log("📁 Kundenverzeichnis erstellt:", CUSTOMERS_DIR);
 }
 
-// === Datei für Textdaten ===
-const DATA_TEXT_FILE = path.join(DATA_DIR, "businessinfo.txt");
-console.log("💾 Textdaten werden gespeichert in:", DATA_TEXT_FILE);
-
-// Falls Datei fehlt, mit Standard-Template anlegen
-if (!fs.existsSync(DATA_TEXT_FILE)) {
-  const defaultText = `Produkte:
-ChattbotKI, SocialmediaKI
-
-Preise:
-ChattbotKI = 1000.- monatlich
-SocialmediaKI = 450.- bis 1200.- monatlich
-
-Produktinfos:
-ChattbotKI = KI-gestützter Chatbot für Unternehmen
-SocialmediaKI = Automatisierte Social-Media-Inhalte und Planung
-
-Telefonsupport:
-Telefonnummer = 1234567890
-Verfügbar = Mo–Fr, 9–17 Uhr
-`;
-  fs.writeFileSync(DATA_TEXT_FILE, defaultText, "utf8");
-  console.log("🗂️ businessinfo.txt erstellt.");
-}
-
-// === Hilfsfunktionen ===
-function loadTextData() {
-  try {
-    return fs.readFileSync(DATA_TEXT_FILE, "utf8").trim();
-  } catch (err) {
-    console.error("❌ Fehler beim Laden von businessinfo.txt:", err);
-    return "";
-  }
-}
-
-function saveTextData(text) {
-  try {
-    fs.writeFileSync(DATA_TEXT_FILE, text, "utf8");
-    console.log("💾 Textdaten gespeichert.");
-  } catch (err) {
-    console.error("❌ Fehler beim Speichern:", err);
-  }
-}
-
-// === BOT & OPENAI Setup ===
-const bot = new Telegraf(process.env.BOT_TOKEN);
+// === OpenAI Setup ===
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// === Admin-Einstellungen ===
-const ADMIN_USERNAME = "laderakh".toLowerCase();
-const adminSessions = {};
+// === Hilfsfunktionen ===
+function loadCustomerList() {
+  return fs
+    .readdirSync(CUSTOMERS_DIR)
+    .filter((d) => fs.statSync(path.join(CUSTOMERS_DIR, d)).isDirectory());
+}
 
-// === BOT START ===
-bot.start((ctx) => {
-  ctx.reply("👋 Hallo! Ich bin der Business-KI-Bot. Frag mich etwas über Produkte, Preise oder Öffnungszeiten!");
-});
+function loadTextData(customer) {
+  const filePath = path.join(CUSTOMERS_DIR, customer, "info.txt");
+  try {
+    return fs.readFileSync(filePath, "utf8").trim();
+  } catch {
+    return "Noch keine Informationen vorhanden.";
+  }
+}
 
-// === ADMIN BEFEHL: /businessinfo ===
-bot.command("businessinfo", async (ctx) => {
-  const username = (ctx.from.username || "").toLowerCase();
-  if (username !== ADMIN_USERNAME) {
-    return ctx.reply("🚫 Nur der Geschäftsinhaber darf diesen Befehl verwenden.");
+function saveTextData(customer, text) {
+  const filePath = path.join(CUSTOMERS_DIR, customer, "info.txt");
+  fs.writeFileSync(filePath, text, "utf8");
+  console.log(`💾 Daten für ${customer} gespeichert.`);
+}
+
+function loadBotToken(customer) {
+  const tokenPath = path.join(CUSTOMERS_DIR, customer, "token.txt");
+  if (fs.existsSync(tokenPath)) return fs.readFileSync(tokenPath, "utf8").trim();
+  return null;
+}
+
+// === Bots dynamisch laden ===
+const bots = {};
+
+function initCustomerBot(customerName) {
+  const token = loadBotToken(customerName);
+  if (!token) {
+    console.warn(`⚠️ Kein Token für ${customerName} gefunden — Bot wird übersprungen.`);
+    return;
   }
 
-  adminSessions[ctx.from.id] = true;
-  ctx.reply(
-    "🧾 Du bist jetzt im Admin-Modus.\n" +
-      "Du kannst die Businessdaten mit `/data` ansehen, kopieren, bearbeiten und zurückschicken.\n" +
-      "Mit `/exit` verlässt du den Admin-Modus."
+  const bot = new Telegraf(token);
+  const ADMIN_USERNAME = "laderakh".toLowerCase();
+  const adminSessions = {};
+
+  bot.start((ctx) =>
+    ctx.reply(`👋 Willkommen beim Chatbot von ${customerName}! Wie kann ich helfen?`)
   );
-});
 
-// === ADMIN BEFEHL: /data ===
-bot.command("data", async (ctx) => {
-  const username = (ctx.from.username || "").toLowerCase();
-  if (username !== ADMIN_USERNAME) {
-    return ctx.reply("🚫 Nur der Geschäftsinhaber darf diesen Befehl verwenden.");
-  }
+  // === Admin-Modus aktivieren ===
+  bot.command("businessinfo", async (ctx) => {
+    const username = (ctx.from.username || "").toLowerCase();
+    if (username !== ADMIN_USERNAME)
+      return ctx.reply("🚫 Nur der Admin darf diesen Befehl verwenden.");
 
-  const textData = loadTextData();
-  ctx.reply(
-    "🧾 Aktuell gespeicherte Business-Infos:\n\n" +
-      "```text\n" +
-      textData +
-      "\n```\n" +
-      "✏️ Du kannst diesen Text kopieren, bearbeiten und **im Admin-Modus** zurückschicken.\n" +
-      "Ich speichere ihn dann dauerhaft in `/data/businessinfo.txt`."
-  );
-});
+    adminSessions[ctx.from.id] = true;
+    ctx.reply(
+      "🧾 Du bist jetzt im Admin-Modus.\n" +
+        "Verwende `/data` zum Anzeigen, sende bearbeiteten Text direkt hierher,\n" +
+        "oder `/exit` zum Beenden."
+    );
+  });
 
-// === TEXT-NACHRICHTEN ===
-bot.on("text", async (ctx) => {
-  const username = (ctx.from.username || "").toLowerCase();
-  const userId = ctx.from.id;
-  const message = ctx.message.text.trim();
+  // === Businessdaten anzeigen ===
+  bot.command("data", async (ctx) => {
+    const username = (ctx.from.username || "").toLowerCase();
+    if (username !== ADMIN_USERNAME)
+      return ctx.reply("🚫 Nur der Admin darf diesen Befehl verwenden.");
 
-  // === ADMIN FUNKTION: bearbeiteter Text ===
-  if (adminSessions[userId] && message.includes(":")) {
-    // Prüfen ob es formatiert ist
-    const looksLikeFormattedData = message.match(/^[A-Za-zäöüÄÖÜß ]+:/m);
-    if (looksLikeFormattedData) {
-      saveTextData(message);
-      return ctx.reply("✅ Alle Business-Infos wurden erfolgreich aktualisiert und dauerhaft gespeichert.");
+    const textData = loadTextData(customerName);
+    ctx.reply(
+      "📋 Aktuell gespeicherte Infos:\n\n```text\n" +
+        textData +
+        "\n```\n✏️ Bearbeite und sende sie zurück, um sie zu speichern."
+    );
+  });
+
+  // === Textnachrichten ===
+  bot.on("text", async (ctx) => {
+    const message = ctx.message.text.trim();
+    const userId = ctx.from.id;
+    const username = (ctx.from.username || "").toLowerCase();
+
+    // Adminbearbeitung
+    if (adminSessions[userId] && message.includes(":")) {
+      saveTextData(customerName, message);
+      return ctx.reply("✅ Infos gespeichert!");
     }
-  }
 
-  // === ADMIN BEFEHL /exit ===
-  if (adminSessions[userId] && message.toLowerCase() === "/exit") {
-    delete adminSessions[userId];
-    return ctx.reply("✅ Admin-Modus beendet.");
-  }
+    if (adminSessions[userId] && message.toLowerCase() === "/exit") {
+      delete adminSessions[userId];
+      return ctx.reply("🚪 Admin-Modus beendet.");
+    }
 
-  // === NORMALER NUTZER: GPT-Antwort ===
-  const textData = loadTextData();
+    // GPT-Abfrage
+    const info = loadTextData(customerName);
+    const prompt = `
+Du bist der KI-Assistent von ${customerName}. Verwende nur die folgenden Infos:
 
-  const prompt = `
-Du bist ein digitaler Assistent eines Unternehmens. Antworte auf Nutzerfragen mithilfe der gespeicherten Informationen unten.
-
-Gespeicherte Informationen:
-${textData}
-
-Wenn der Nutzer eine unklare Frage stellt, bitte ihn höflich, zu präzisieren, ob er etwas zu einem der folgenden Themen wissen möchte:
-${textData
-  .split("\n")
-  .filter((line) => line.endsWith(":"))
-  .map((line) => "- " + line.replace(":", ""))
-  .join("\n")}
+${info}
 
 Nutzerfrage: "${message}"
 `;
 
-  try {
-    const gptResponse = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [{ role: "user", content: prompt }],
-      max_tokens: 200,
-    });
+    try {
+      const gpt = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [{ role: "user", content: prompt }],
+        max_tokens: 200,
+      });
+      const reply = gpt.choices[0].message.content.trim();
+      ctx.reply(reply);
+    } catch (err) {
+      console.error("❌ GPT Fehler:", err);
+      ctx.reply("⚠️ Entschuldigung, ich konnte das gerade nicht beantworten.");
+    }
+  });
 
-    const reply = gptResponse.choices[0].message.content.trim();
-    await ctx.reply(reply);
-  } catch (err) {
-    console.error("❌ GPT-Fehler:", err);
-    await ctx.reply("⚠️ Entschuldigung, ich konnte das gerade nicht beantworten.");
-  }
+  // === Webhook einrichten ===
+  const RENDER_URL = process.env.RENDER_URL || "https://chatbotki-mein.onrender.com";
+  bot.telegram.setWebhook(`${RENDER_URL}/bot/${customerName}`);
+  app.use(`/bot/${customerName}`, bot.webhookCallback(`/bot/${customerName}`));
+
+  bots[customerName] = bot;
+  console.log(`🤖 Bot für ${customerName} gestartet.`);
+}
+
+// === Alle Kundenbots laden ===
+loadCustomerList().forEach(initCustomerBot);
+
+// === Admin Dashboard ===
+app.get("/admin", (req, res) => {
+  const customers = loadCustomerList();
+  res.send(`
+    <h1>🧠 Kundenübersicht</h1>
+    <ul>
+      ${customers.map((c) => `<li>${c}</li>`).join("")}
+    </ul>
+    <form method="post" action="/admin/new">
+      <h2>Neuen Kunden hinzufügen</h2>
+      <input name="name" placeholder="Kundenname" required />
+      <input name="token" placeholder="Bot Token" required />
+      <button type="submit">Erstellen</button>
+    </form>
+  `);
 });
 
-// === SERVER START ===
+// === POST /admin/new ===
+app.post("/admin/new", express.urlencoded({ extended: true }), (req, res) => {
+  const { name, token } = req.body;
+  const customerDir = path.join(CUSTOMERS_DIR, name.toLowerCase().replace(/\s+/g, "-"));
+
+  if (fs.existsSync(customerDir)) return res.send("❌ Kunde existiert bereits.");
+
+  fs.mkdirSync(customerDir);
+  fs.writeFileSync(path.join(customerDir, "token.txt"), token);
+  fs.writeFileSync(
+    path.join(customerDir, "info.txt"),
+    `Produkte:\nPreise:\nKontakt:\n`,
+    "utf8"
+  );
+
+  initCustomerBot(name.toLowerCase().replace(/\s+/g, "-"));
+  res.send(`✅ Kunde ${name} wurde hinzugefügt und Bot gestartet!`);
+});
+
+// === Root ===
+app.get("/", (req, res) => res.send("🤖 Multi-Kunden-Bot läuft!"));
+
+// === Server starten ===
 const PORT = process.env.PORT || 10000;
-const RENDER_URL = "https://chatbotki-mein.onrender.com";
+app.listen(PORT, () => console.log(`🌍 Server läuft auf Port ${PORT}`));
 
-(async () => {
-  try {
-    await bot.telegram.setWebhook(`${RENDER_URL}/bot${process.env.BOT_TOKEN}`);
-    app.use(bot.webhookCallback(`/bot${process.env.BOT_TOKEN}`));
-
-    app.get("/", (req, res) => res.send("🤖 Business-KI-Bot läuft über Webhook!"));
-    app.listen(PORT, () => console.log(`🌐 Server läuft auf Port ${PORT}`));
-
-    console.log("✅ Webhook erfolgreich gesetzt!");
-
-    // === Persistenz-Test ===
-    const testFile = path.join(DATA_DIR, "persistenztest.txt");
-    fs.writeFileSync(testFile, `Test gespeichert am ${new Date().toISOString()}\n`, { flag: "a" });
-    console.log("✅ Persistenz-Test erfolgreich: Datei geschrieben ->", testFile);
-
-  } catch (err) {
-    console.error("❌ Fehler beim Starten des Bots:", err);
-  }
-})();
 
 
 
