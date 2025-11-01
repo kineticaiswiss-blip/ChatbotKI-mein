@@ -66,7 +66,6 @@ function saveAdminData(data) {
 function requirePIN(req, res, next) {
   const adminData = loadAdminData();
 
-  // Kein PIN gesetzt → Ersteinrichtung
   if (!adminData.pin) {
     return res.send(`
       <h1>🔐 Admin-PIN festlegen</h1>
@@ -77,12 +76,10 @@ function requirePIN(req, res, next) {
     `);
   }
 
-  // PIN korrekt übergeben
   if (req.query.pin === adminData.pin) {
     return next();
   }
 
-  // PIN falsch oder fehlt
   res.send(`
     <h1>🔑 PIN eingeben</h1>
     <form method="get" action="${req.path}">
@@ -107,11 +104,29 @@ app.post("/admin/change-pin", express.urlencoded({ extended: true }), (req, res)
 
 // === Bots dynamisch laden ===
 const bots = {};
+const pausedBots = {}; // <-- hier speichern wir pausierte Bots
+
+function stopCustomerBot(customer) {
+  if (bots[customer]) {
+    try {
+      bots[customer].stop();
+      delete bots[customer];
+      console.log(`⏹️ Bot für ${customer} gestoppt.`);
+    } catch (err) {
+      console.error(`Fehler beim Stoppen von ${customer}:`, err);
+    }
+  }
+}
 
 function initCustomerBot(customerName) {
   const token = loadBotToken(customerName);
   if (!token) {
     console.warn(`⚠️ Kein Token für ${customerName} gefunden — Bot wird übersprungen.`);
+    return;
+  }
+
+  if (pausedBots[customerName]) {
+    console.log(`⏸️ Bot ${customerName} ist pausiert — wird nicht gestartet.`);
     return;
   }
 
@@ -123,41 +138,28 @@ function initCustomerBot(customerName) {
     ctx.reply(`👋 Willkommen beim Chatbot von ${customerName}! Wie kann ich helfen?`)
   );
 
-  // Admin-Modus aktivieren
   bot.command("businessinfo", async (ctx) => {
     const username = (ctx.from.username || "").toLowerCase();
     if (username !== ADMIN_USERNAME)
       return ctx.reply("🚫 Nur der Admin darf diesen Befehl verwenden.");
 
     adminSessions[ctx.from.id] = true;
-    ctx.reply(
-      "🧾 Du bist jetzt im Admin-Modus.\n" +
-        "Verwende `/data` zum Anzeigen, sende bearbeiteten Text direkt hierher,\n" +
-        "oder `/exit` zum Beenden."
-    );
+    ctx.reply("🧾 Du bist jetzt im Admin-Modus.\nVerwende `/data`, sende Änderungen oder `/exit`.");
   });
 
-  // Businessdaten anzeigen
   bot.command("data", async (ctx) => {
     const username = (ctx.from.username || "").toLowerCase();
     if (username !== ADMIN_USERNAME)
       return ctx.reply("🚫 Nur der Admin darf diesen Befehl verwenden.");
-
     const textData = loadTextData(customerName);
-    ctx.reply(
-      "📋 Aktuell gespeicherte Infos:\n\n```text\n" +
-        textData +
-        "\n```\n✏️ Bearbeite und sende sie zurück, um sie zu speichern."
-    );
+    ctx.reply(`📋 Aktuell gespeicherte Infos:\n\n${textData}`);
   });
 
-  // Textnachrichten
   bot.on("text", async (ctx) => {
     const message = ctx.message.text.trim();
     const userId = ctx.from.id;
     const username = (ctx.from.username || "").toLowerCase();
 
-    // Adminbearbeitung
     if (adminSessions[userId] && message.includes(":")) {
       saveTextData(customerName, message);
       return ctx.reply("✅ Infos gespeichert!");
@@ -168,10 +170,9 @@ function initCustomerBot(customerName) {
       return ctx.reply("🚪 Admin-Modus beendet.");
     }
 
-    // GPT-Abfrage
     const info = loadTextData(customerName);
     const prompt = `
-Du bist der KI-Assistent von ${customerName}. Verwende nur die folgenden Infos:
+Du bist der KI-Assistent von ${customerName}. Verwende nur folgende Infos:
 
 ${info}
 
@@ -184,15 +185,13 @@ Nutzerfrage: "${message}"
         messages: [{ role: "user", content: prompt }],
         max_tokens: 200,
       });
-      const reply = gpt.choices[0].message.content.trim();
-      ctx.reply(reply);
+      ctx.reply(gpt.choices[0].message.content.trim());
     } catch (err) {
       console.error("❌ GPT Fehler:", err);
       ctx.reply("⚠️ Entschuldigung, ich konnte das gerade nicht beantworten.");
     }
   });
 
-  // Webhook einrichten
   const RENDER_URL = process.env.RENDER_URL || "https://chatbotki-mein.onrender.com";
   bot.telegram.setWebhook(`${RENDER_URL}/bot/${customerName}`);
   app.use(`/bot/${customerName}`, bot.webhookCallback(`/bot/${customerName}`));
@@ -212,16 +211,31 @@ app.get("/admin", requirePIN, (req, res) => {
   res.send(`
     <h1>🧠 Kundenübersicht</h1>
     <ul>
-      ${customers.map((c) => `<li><a href="/admin/view/${c}?pin=${currentPIN}">${c}</a></li>`).join("")}
+      ${customers
+        .map(
+          (c) => `
+        <li>
+          ${c} 
+          ${pausedBots[c] ? "⏸️ (Pausiert)" : "🟢 (Aktiv)"}
+          - <a href="/admin/view/${c}?pin=${currentPIN}">📄 Bearbeiten</a>
+          - <a href="/admin/token/${c}?pin=${currentPIN}">🔑 Token</a>
+          - ${
+            pausedBots[c]
+              ? `<a href="/admin/bot/resume/${c}?pin=${currentPIN}">▶️ Fortsetzen</a>`
+              : `<a href="/admin/bot/pause/${c}?pin=${currentPIN}">⏸️ Pausieren</a>`
+          }
+        </li>`
+        )
+        .join("")}
     </ul>
-    <hr />
+    <hr/>
     <form method="post" action="/admin/new?pin=${currentPIN}">
       <h2>➕ Neuen Kunden hinzufügen</h2>
       <input name="name" placeholder="Kundenname" required />
       <input name="token" placeholder="Bot Token" required />
       <button type="submit">Erstellen</button>
     </form>
-    <hr />
+    <hr/>
     <form method="post" action="/admin/change-pin?pin=${currentPIN}">
       <h2>🔑 PIN ändern</h2>
       <input name="newPin" type="password" placeholder="Neuer PIN" required />
@@ -230,49 +244,54 @@ app.get("/admin", requirePIN, (req, res) => {
   `);
 });
 
-// === Kunden-Detailansicht ===
-app.get("/admin/view/:customer", requirePIN, (req, res) => {
+// === Bot pausieren / fortsetzen ===
+app.get("/admin/bot/pause/:customer", requirePIN, (req, res) => {
   const { customer } = req.params;
-  const info = loadTextData(customer);
-  const currentPIN = loadAdminData().pin;
+  stopCustomerBot(customer);
+  pausedBots[customer] = true;
+  res.redirect(`/admin?pin=${loadAdminData().pin}`);
+});
 
+app.get("/admin/bot/resume/:customer", requirePIN, (req, res) => {
+  const { customer } = req.params;
+  delete pausedBots[customer];
+  initCustomerBot(customer);
+  res.redirect(`/admin?pin=${loadAdminData().pin}`);
+});
+
+// === Token ändern ===
+app.get("/admin/token/:customer", requirePIN, (req, res) => {
+  const { customer } = req.params;
+  const pin = loadAdminData().pin;
+  const tokenPath = path.join(CUSTOMERS_DIR, customer, "token.txt");
+  const currentToken = fs.existsSync(tokenPath)
+    ? fs.readFileSync(tokenPath, "utf8").trim()
+    : "(kein Token gefunden)";
   res.send(`
-    <h1>📄 Daten von ${customer}</h1>
-    <form method="post" action="/admin/save/${customer}?pin=${currentPIN}">
-      <textarea name="data" rows="20" cols="80">${info}</textarea><br/>
-      <button type="submit">💾 Speichern</button>
+    <h1>🔑 Token für ${customer} ändern</h1>
+    <p>Aktueller Token (gekürzt): ${currentToken.slice(0, 10)}...</p>
+    <form method="post" action="/admin/token/${customer}?pin=${pin}">
+      <input name="newToken" placeholder="Neuer Bot Token" required />
+      <button type="submit">💾 Speichern & Bot neu starten</button>
     </form>
-    <p><a href="/admin?pin=${currentPIN}">⬅️ Zurück</a></p>
+    <p><a href="/admin?pin=${pin}">⬅️ Zurück</a></p>
   `);
 });
 
-// === Kundendaten speichern ===
-app.post("/admin/save/:customer", requirePIN, express.urlencoded({ extended: true }), (req, res) => {
+app.post("/admin/token/:customer", requirePIN, express.urlencoded({ extended: true }), (req, res) => {
   const { customer } = req.params;
-  const { data } = req.body;
-  saveTextData(customer, data);
-  const currentPIN = loadAdminData().pin;
-  res.send(`<h2>✅ Gespeichert!</h2><a href="/admin/view/${customer}?pin=${currentPIN}">Zurück</a>`);
-});
+  const { newToken } = req.body;
+  const pin = loadAdminData().pin;
 
-// === Neuen Kunden hinzufügen ===
-app.post("/admin/new", requirePIN, express.urlencoded({ extended: true }), (req, res) => {
-  const { name, token } = req.body;
-  const customerDir = path.join(CUSTOMERS_DIR, name.toLowerCase().replace(/\s+/g, "-"));
+  fs.writeFileSync(path.join(CUSTOMERS_DIR, customer, "token.txt"), newToken, "utf8");
+  stopCustomerBot(customer);
+  initCustomerBot(customer);
 
-  if (fs.existsSync(customerDir)) return res.send("❌ Kunde existiert bereits.");
-
-  fs.mkdirSync(customerDir);
-  fs.writeFileSync(path.join(customerDir, "token.txt"), token);
-  fs.writeFileSync(
-    path.join(customerDir, "info.txt"),
-    `Produkte:\nPreise:\nKontakt:\n`,
-    "utf8"
-  );
-
-  initCustomerBot(name.toLowerCase().replace(/\s+/g, "-"));
-  const currentPIN = loadAdminData().pin;
-  res.send(`✅ Kunde ${name} wurde hinzugefügt und Bot gestartet! <a href="/admin?pin=${currentPIN}">Zurück</a>`);
+  res.send(`
+    <h2>✅ Token für ${customer} aktualisiert!</h2>
+    <p>Der Bot wurde neu gestartet.</p>
+    <a href="/admin?pin=${pin}">⬅️ Zurück zum Adminbereich</a>
+  `);
 });
 
 // === Root ===
@@ -281,6 +300,7 @@ app.get("/", (req, res) => res.send("🤖 Multi-Kunden-Bot läuft!"));
 // === Server starten ===
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`🌍 Server läuft auf Port ${PORT}`));
+
 
 
 
