@@ -149,21 +149,56 @@ Nutzerfrage: "${message}"
 loadCustomerList().forEach(initCustomerBot);
 
 // === Admin Dashboard ===
+// === Admin Dashboard ===
 app.get("/admin", (req, res) => {
   const customers = loadCustomerList();
   res.send(`
     <h1>🧠 Kundenübersicht</h1>
     <ul>
-      ${customers.map((c) => `<li>${c}</li>`).join("")}
+      ${customers
+        .map(
+          (c) =>
+            `<li>${c} - <a href="/admin/view/${c}">📄 Anzeigen / Bearbeiten</a></li>`
+        )
+        .join("")}
     </ul>
+    <hr>
     <form method="post" action="/admin/new">
-      <h2>Neuen Kunden hinzufügen</h2>
+      <h2>➕ Neuen Kunden hinzufügen</h2>
       <input name="name" placeholder="Kundenname" required />
       <input name="token" placeholder="Bot Token" required />
       <button type="submit">Erstellen</button>
     </form>
   `);
 });
+
+// === Einzelkunden ansehen/bearbeiten ===
+app.get("/admin/view/:customer", (req, res) => {
+  const { customer } = req.params;
+  const info = loadTextData(customer);
+  res.send(`
+    <h1>📝 ${customer} bearbeiten</h1>
+    <form method="post" action="/admin/save/${customer}">
+      <textarea name="text" rows="20" cols="80">${info}</textarea><br>
+      <button type="submit">💾 Speichern</button>
+    </form>
+    <br>
+    <a href="/admin">⬅️ Zurück zur Übersicht</a>
+  `);
+});
+
+// === Änderungen speichern ===
+app.post("/admin/save/:customer", express.urlencoded({ extended: true }), (req, res) => {
+  const { customer } = req.params;
+  const { text } = req.body;
+  saveTextData(customer, text);
+  res.send(`
+    <h2>✅ Daten für ${customer} gespeichert!</h2>
+    <a href="/admin/view/${customer}">⬅️ Zurück</a> |
+    <a href="/admin">🏠 Übersicht</a>
+  `);
+});
+
 
 // === POST /admin/new ===
 app.post("/admin/new", express.urlencoded({ extended: true }), (req, res) => {
