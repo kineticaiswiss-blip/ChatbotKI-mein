@@ -7,9 +7,10 @@ import OpenAI from "openai";
 const app = express();
 app.use(express.json());
 
-// === WICHTIG: Datenstruktur vorbereiten ===
+// === Verzeichnisstruktur ===
 const DATA_DIR = "/data";
 const CUSTOMERS_DIR = path.join(DATA_DIR, "customers");
+const ADMIN_FILE = path.join(DATA_DIR, "admin.json");
 
 if (!fs.existsSync(CUSTOMERS_DIR)) {
   fs.mkdirSync(CUSTOMERS_DIR, { recursive: true });
@@ -49,6 +50,61 @@ function loadBotToken(customer) {
   return null;
 }
 
+// === Admin-PIN Verwaltung ===
+function loadAdminData() {
+  try {
+    return JSON.parse(fs.readFileSync(ADMIN_FILE, "utf8"));
+  } catch {
+    return { pin: null };
+  }
+}
+
+function saveAdminData(data) {
+  fs.writeFileSync(ADMIN_FILE, JSON.stringify(data, null, 2), "utf8");
+}
+
+function requirePIN(req, res, next) {
+  const adminData = loadAdminData();
+
+  // Kein PIN gesetzt → Ersteinrichtung
+  if (!adminData.pin) {
+    return res.send(`
+      <h1>🔐 Admin-PIN festlegen</h1>
+      <form method="post" action="/set-pin">
+        <input name="pin" type="password" placeholder="Neuer PIN" required />
+        <button type="submit">PIN speichern</button>
+      </form>
+    `);
+  }
+
+  // PIN korrekt übergeben
+  if (req.query.pin === adminData.pin) {
+    return next();
+  }
+
+  // PIN falsch oder fehlt
+  res.send(`
+    <h1>🔑 PIN eingeben</h1>
+    <form method="get" action="${req.path}">
+      <input name="pin" type="password" placeholder="Admin PIN" required />
+      <button type="submit">Login</button>
+    </form>
+  `);
+}
+
+// === PIN-Routen ===
+app.post("/set-pin", express.urlencoded({ extended: true }), (req, res) => {
+  const { pin } = req.body;
+  saveAdminData({ pin });
+  res.send(`<h2>✅ PIN gespeichert!</h2><a href="/admin?pin=${pin}">Zum Adminbereich</a>`);
+});
+
+app.post("/admin/change-pin", express.urlencoded({ extended: true }), (req, res) => {
+  const { newPin } = req.body;
+  saveAdminData({ pin: newPin });
+  res.send(`<h2>🔄 PIN geändert!</h2><a href="/admin?pin=${newPin}">Zurück zum Adminbereich</a>`);
+});
+
 // === Bots dynamisch laden ===
 const bots = {};
 
@@ -67,7 +123,7 @@ function initCustomerBot(customerName) {
     ctx.reply(`👋 Willkommen beim Chatbot von ${customerName}! Wie kann ich helfen?`)
   );
 
-  // === Admin-Modus aktivieren ===
+  // Admin-Modus aktivieren
   bot.command("businessinfo", async (ctx) => {
     const username = (ctx.from.username || "").toLowerCase();
     if (username !== ADMIN_USERNAME)
@@ -81,7 +137,7 @@ function initCustomerBot(customerName) {
     );
   });
 
-  // === Businessdaten anzeigen ===
+  // Businessdaten anzeigen
   bot.command("data", async (ctx) => {
     const username = (ctx.from.username || "").toLowerCase();
     if (username !== ADMIN_USERNAME)
@@ -95,7 +151,7 @@ function initCustomerBot(customerName) {
     );
   });
 
-  // === Textnachrichten ===
+  // Textnachrichten
   bot.on("text", async (ctx) => {
     const message = ctx.message.text.trim();
     const userId = ctx.from.id;
@@ -136,7 +192,7 @@ Nutzerfrage: "${message}"
     }
   });
 
-  // === Webhook einrichten ===
+  // Webhook einrichten
   const RENDER_URL = process.env.RENDER_URL || "https://chatbotki-mein.onrender.com";
   bot.telegram.setWebhook(`${RENDER_URL}/bot/${customerName}`);
   app.use(`/bot/${customerName}`, bot.webhookCallback(`/bot/${customerName}`));
@@ -149,59 +205,58 @@ Nutzerfrage: "${message}"
 loadCustomerList().forEach(initCustomerBot);
 
 // === Admin Dashboard ===
-// === Admin Dashboard ===
-app.get("/admin", (req, res) => {
+app.get("/admin", requirePIN, (req, res) => {
   const customers = loadCustomerList();
+  const currentPIN = loadAdminData().pin;
+
   res.send(`
     <h1>🧠 Kundenübersicht</h1>
     <ul>
-      ${customers
-        .map(
-          (c) =>
-            `<li>${c} - <a href="/admin/view/${c}">📄 Anzeigen / Bearbeiten</a></li>`
-        )
-        .join("")}
+      ${customers.map((c) => `<li><a href="/admin/view/${c}?pin=${currentPIN}">${c}</a></li>`).join("")}
     </ul>
-    <hr>
-    <form method="post" action="/admin/new">
+    <hr />
+    <form method="post" action="/admin/new?pin=${currentPIN}">
       <h2>➕ Neuen Kunden hinzufügen</h2>
       <input name="name" placeholder="Kundenname" required />
       <input name="token" placeholder="Bot Token" required />
       <button type="submit">Erstellen</button>
     </form>
+    <hr />
+    <form method="post" action="/admin/change-pin?pin=${currentPIN}">
+      <h2>🔑 PIN ändern</h2>
+      <input name="newPin" type="password" placeholder="Neuer PIN" required />
+      <button type="submit">PIN ändern</button>
+    </form>
   `);
 });
 
-// === Einzelkunden ansehen/bearbeiten ===
-app.get("/admin/view/:customer", (req, res) => {
+// === Kunden-Detailansicht ===
+app.get("/admin/view/:customer", requirePIN, (req, res) => {
   const { customer } = req.params;
   const info = loadTextData(customer);
+  const currentPIN = loadAdminData().pin;
+
   res.send(`
-    <h1>📝 ${customer} bearbeiten</h1>
-    <form method="post" action="/admin/save/${customer}">
-      <textarea name="text" rows="20" cols="80">${info}</textarea><br>
+    <h1>📄 Daten von ${customer}</h1>
+    <form method="post" action="/admin/save/${customer}?pin=${currentPIN}">
+      <textarea name="data" rows="20" cols="80">${info}</textarea><br/>
       <button type="submit">💾 Speichern</button>
     </form>
-    <br>
-    <a href="/admin">⬅️ Zurück zur Übersicht</a>
+    <p><a href="/admin?pin=${currentPIN}">⬅️ Zurück</a></p>
   `);
 });
 
-// === Änderungen speichern ===
-app.post("/admin/save/:customer", express.urlencoded({ extended: true }), (req, res) => {
+// === Kundendaten speichern ===
+app.post("/admin/save/:customer", requirePIN, express.urlencoded({ extended: true }), (req, res) => {
   const { customer } = req.params;
-  const { text } = req.body;
-  saveTextData(customer, text);
-  res.send(`
-    <h2>✅ Daten für ${customer} gespeichert!</h2>
-    <a href="/admin/view/${customer}">⬅️ Zurück</a> |
-    <a href="/admin">🏠 Übersicht</a>
-  `);
+  const { data } = req.body;
+  saveTextData(customer, data);
+  const currentPIN = loadAdminData().pin;
+  res.send(`<h2>✅ Gespeichert!</h2><a href="/admin/view/${customer}?pin=${currentPIN}">Zurück</a>`);
 });
 
-
-// === POST /admin/new ===
-app.post("/admin/new", express.urlencoded({ extended: true }), (req, res) => {
+// === Neuen Kunden hinzufügen ===
+app.post("/admin/new", requirePIN, express.urlencoded({ extended: true }), (req, res) => {
   const { name, token } = req.body;
   const customerDir = path.join(CUSTOMERS_DIR, name.toLowerCase().replace(/\s+/g, "-"));
 
@@ -216,7 +271,8 @@ app.post("/admin/new", express.urlencoded({ extended: true }), (req, res) => {
   );
 
   initCustomerBot(name.toLowerCase().replace(/\s+/g, "-"));
-  res.send(`✅ Kunde ${name} wurde hinzugefügt und Bot gestartet!`);
+  const currentPIN = loadAdminData().pin;
+  res.send(`✅ Kunde ${name} wurde hinzugefügt und Bot gestartet! <a href="/admin?pin=${currentPIN}">Zurück</a>`);
 });
 
 // === Root ===
@@ -225,6 +281,7 @@ app.get("/", (req, res) => res.send("🤖 Multi-Kunden-Bot läuft!"));
 // === Server starten ===
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`🌍 Server läuft auf Port ${PORT}`));
+
 
 
 
