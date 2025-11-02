@@ -104,7 +104,7 @@ app.post("/admin/change-pin", express.urlencoded({ extended: true }), (req, res)
 
 // === Bots dynamisch laden ===
 const bots = {};
-const pausedBots = {}; // <-- hier speichern wir pausierte Bots
+const pausedBots = {};
 
 function stopCustomerBot(customer) {
   if (bots[customer]) {
@@ -209,38 +209,83 @@ app.get("/admin", requirePIN, (req, res) => {
   const currentPIN = loadAdminData().pin;
 
   res.send(`
-    <h1>🧠 Kundenübersicht</h1>
-    <ul>
-      ${customers
-        .map(
-          (c) => `
-        <li>
-          ${c} 
-          ${pausedBots[c] ? "⏸️ (Pausiert)" : "🟢 (Aktiv)"}
-          - <a href="/admin/view/${c}?pin=${currentPIN}">📄 Bearbeiten</a>
-          - <a href="/admin/token/${c}?pin=${currentPIN}">🔑 Token</a>
-          - ${
-            pausedBots[c]
-              ? `<a href="/admin/bot/resume/${c}?pin=${currentPIN}">▶️ Fortsetzen</a>`
-              : `<a href="/admin/bot/pause/${c}?pin=${currentPIN}">⏸️ Pausieren</a>`
-          }
-        </li>`
-        )
-        .join("")}
-    </ul>
-    <hr/>
-    <form method="post" action="/admin/new?pin=${currentPIN}">
-      <h2>➕ Neuen Kunden hinzufügen</h2>
-      <input name="name" placeholder="Kundenname" required />
-      <input name="token" placeholder="Bot Token" required />
-      <button type="submit">Erstellen</button>
-    </form>
-    <hr/>
-    <form method="post" action="/admin/change-pin?pin=${currentPIN}">
-      <h2>🔑 PIN ändern</h2>
-      <input name="newPin" type="password" placeholder="Neuer PIN" required />
-      <button type="submit">PIN ändern</button>
-    </form>
+  <style>
+    body { font-family: Arial; margin: 40px; background: #f7f7f7; color:#333; }
+    h1 { color:#222; }
+    ul { list-style:none; padding:0; }
+    li { background:#fff; margin:10px 0; padding:10px 15px; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,0.1); }
+    a { text-decoration:none; margin:0 5px; }
+    button, input { padding:8px; border-radius:6px; border:1px solid #ccc; }
+  </style>
+  <h1>🧠 Kundenübersicht</h1>
+  <ul>
+    ${customers
+      .map(
+        (c) => `
+      <li>
+        <b>${c}</b> 
+        ${pausedBots[c] ? "⏸️ (Pausiert)" : "🟢 (Aktiv)"}
+        - <a href="/admin/view/${c}?pin=${currentPIN}">📄 Bearbeiten</a>
+        - <a href="/admin/token/${c}?pin=${currentPIN}">🔑 Token</a>
+        - ${
+          pausedBots[c]
+            ? `<a href="/admin/bot/resume/${c}?pin=${currentPIN}">▶️ Fortsetzen</a>`
+            : `<a href="/admin/bot/pause/${c}?pin=${currentPIN}">⏸️ Pausieren</a>`
+        }
+      </li>`
+      )
+      .join("")}
+  </ul>
+
+  <hr/>
+  <form method="post" action="/admin/new?pin=${currentPIN}">
+    <h2>➕ Neuen Kunden hinzufügen</h2>
+    <input name="name" placeholder="Kundenname" required />
+    <input name="token" placeholder="Bot Token" required />
+    <button type="submit">Erstellen</button>
+  </form>
+
+  <hr/>
+  <form method="post" action="/admin/change-pin?pin=${currentPIN}">
+    <h2>🔑 PIN ändern</h2>
+    <input name="newPin" type="password" placeholder="Neuer PIN" required />
+    <button type="submit">PIN ändern</button>
+  </form>
+  `);
+});
+
+// === Kunden-Detailansicht ===
+app.get("/admin/view/:customer", requirePIN, (req, res) => {
+  const { customer } = req.params;
+  const info = loadTextData(customer);
+  const currentPIN = loadAdminData().pin;
+
+  res.send(`
+  <style>
+    body { font-family: Arial; margin: 40px; background: #f7f7f7; }
+    textarea { width:100%; height:60vh; font-family: monospace; border-radius:8px; padding:10px; }
+    button { margin-top:10px; padding:10px 15px; border-radius:8px; background:#007bff; color:#fff; border:none; cursor:pointer; }
+    button:hover { background:#0056b3; }
+    a { text-decoration:none; }
+  </style>
+  <h1>📄 Daten von ${customer}</h1>
+  <form method="post" action="/admin/save/${customer}?pin=${currentPIN}">
+    <textarea name="data">${info}</textarea><br/>
+    <button type="submit">💾 Speichern</button>
+  </form>
+  <p><a href="/admin?pin=${currentPIN}">⬅️ Zurück zur Übersicht</a></p>
+  `);
+});
+
+// === Kundendaten speichern ===
+app.post("/admin/save/:customer", requirePIN, express.urlencoded({ extended: true }), (req, res) => {
+  const { customer } = req.params;
+  const { data } = req.body;
+  saveTextData(customer, data);
+  const currentPIN = loadAdminData().pin;
+  res.send(`
+    <h2>✅ Gespeichert!</h2>
+    <a href="/admin/view/${customer}?pin=${currentPIN}">⬅️ Zurück</a>
   `);
 });
 
@@ -300,6 +345,7 @@ app.get("/", (req, res) => res.send("🤖 Multi-Kunden-Bot läuft!"));
 // === Server starten ===
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`🌍 Server läuft auf Port ${PORT}`));
+
 
 
 
