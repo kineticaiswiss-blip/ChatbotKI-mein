@@ -342,6 +342,24 @@ app.post("/admin/token/:customer", requirePIN, express.urlencoded({ extended: tr
 // === Root ===
 app.get("/", (req, res) => res.send("🤖 Multi-Kunden-Bot läuft!"));
 
+// === Webhook-Eingang für Telegram-Bots ===
+app.post("/bot/:customerId", express.json(), async (req, res) => {
+  const { customerId } = req.params;
+  const bot = bots[customerId]; // <-- dein Bot-Objekt aus dem bots{} Dictionary
+
+  if (!bot) {
+    console.error(`❌ Kein Bot gefunden für ${customerId}`);
+    return res.sendStatus(404);
+  }
+
+  try {
+    await bot.handleUpdate(req.body, res);
+  } catch (err) {
+    console.error(`⚠️ Fehler beim Verarbeiten des Updates von ${customerId}:`, err);
+    res.sendStatus(500);
+  }
+});
+
 // === Server starten ===
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`🌍 Server läuft auf Port ${PORT}`));
