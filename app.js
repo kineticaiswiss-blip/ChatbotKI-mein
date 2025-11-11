@@ -488,6 +488,32 @@ app.post("/bot/:customerId", express.json(), async (req, res) => {
 // === Root & start ===
 app.get("/", (req, res) => res.send(`<h1>🤖 Multi-Kunden-Bot läuft</h1><p><a href="/register">Registrieren</a></p><p><a href="/admin">Admin</a></p>`));
 
+// === Kunden-Dashboard (nur eigene Daten) ===
+app.get("/customer/:customer", (req, res) => {
+  const { customer } = req.params;
+  const ip = req.headers["x-forwarded-for"]?.split(",")[0] || req.socket.remoteAddress;
+
+  // Admin darf alles
+  const adminData = loadAdminData();
+  const isAdminIP = adminData.mainAdminIP === ip;
+
+  // Prüfe, ob Kunde existiert
+  const customerDir = path.join(CUSTOMERS_DIR, customer);
+  if (!fs.existsSync(customerDir)) {
+    return res.status(404).send("<h2>❌ Kunde nicht gefunden.</h2>");
+  }
+
+  // Prüfe, ob IP erlaubt
+  const allowedIPFile = path.join(customerDir, "allowed_ips.json");
+  let allowedIPs = [];
+  if (fs.existsSync(allowedIPFile)) {
+    allowedIPs = JSON.parse(fs.readFileSync(allowedIPFile, "utf8"));
+  }
+
+  if (!isAdminIP && !allowedIPs.includes(ip)) {
+    return res.status(403).send(`<h2>🚫 Zugriff verweigert</h2><p>Ihre IP (${ip}) ist nicht berechtigt.</p>`);
+ 
+
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`Server läuft auf Port ${PORT}`));
 
