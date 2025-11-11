@@ -510,12 +510,23 @@ app.get("/customer/:customer", (req, res) => {
     allowedIPs = JSON.parse(fs.readFileSync(allowedIPFile, "utf8"));
   }
 
-  if (!isAdminIP && !allowedIPs.includes(ip)) {
+    if (!isAdminIP && !allowedIPs.includes(ip)) {
     return res.status(403).send(`<h2>🚫 Zugriff verweigert</h2><p>Ihre IP (${ip}) ist nicht berechtigt.</p>`);
- 
+  }
 
+  // Kunde darf eigene Daten sehen
+  const info = loadTextData(customer);
+  res.send(`
+    <h1>🏢 Kunden-Dashboard: ${customer}</h1>
+    <pre>${info}</pre>
+    <p>Ihre IP: ${ip}</p>
+    <p><a href="/">Zurück</a></p>
+  `);
+});
+
+// === Server starten ===
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`Server läuft auf Port ${PORT}`));
+app.listen(PORT, () => console.log(`✅ Server läuft auf Port ${PORT}`));
 
 
 
