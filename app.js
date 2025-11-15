@@ -144,16 +144,12 @@ function stopCustomerBot(customer) {
 
 // INIT CUSTOMER BOT
 // INIT CUSTOMER BOT — stabiler mit Pause/Resume und Polling-Fallback
+// === INIT CUSTOMER BOT (nur Polling) ===
 async function initCustomerBot(customer) {
   const token = loadBotToken(customer);
   if (!token) return console.log(`⚠️ Kein Token für ${customer}`);
+  if (pausedBots[customer]) return console.log(`⏸️ Bot ${customer} ist pausiert.`);
 
-  if (pausedBots[customer]) {
-    console.log(`⏸️ Bot ${customer} ist pausiert.`);
-    return;
-  }
-
-  // Bot erstellen
   const bot = new Telegraf(token);
   const ADMIN_USERNAME = "laderakh".toLowerCase();
   const sessions = {};
@@ -210,21 +206,14 @@ Frage: "${msg}"`;
     }
   });
 
-  // Webhook oder Polling
-  const RENDER_URL =
-    process.env.RENDER_URL || process.env.PRIMARY_URL || "https://chatbotki-mein.onrender.com";
-
+  // Nur Polling, kein Webhook
   try {
-    await bot.telegram.setWebhook(`${RENDER_URL}/bot/${customer}`);
-    app.use(`/bot/${customer}`, bot.webhookCallback(`/bot/${customer}`));
-    console.log(`Webhook gesetzt für ${customer}`);
+    await bot.launch(); // Polling starten
+    bots[customer] = bot;
+    console.log(`🤖 Bot gestartet: ${customer} (Polling)`);
   } catch (e) {
-    console.warn(`Webhook nicht möglich, nutze Polling für ${customer}:`, e.message);
-    await bot.launch(); // Polling fallback
+    console.error(`Bot für ${customer} konnte nicht gestartet werden:`, e.message);
   }
-
-  bots[customer] = bot;
-  console.log(`🤖 Bot gestartet: ${customer}`);
 }
 
 
