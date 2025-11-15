@@ -143,7 +143,8 @@ function stopCustomerBot(customer) {
 }
 
 // INIT CUSTOMER BOT
-function initCustomerBot(customer) {
+// INIT CUSTOMER BOT — stabiler mit Pause/Resume und Polling-Fallback
+async function initCustomerBot(customer) {
   const token = loadBotToken(customer);
   if (!token) return console.log(`⚠️ Kein Token für ${customer}`);
 
@@ -152,14 +153,17 @@ function initCustomerBot(customer) {
     return;
   }
 
+  // Bot erstellen
   const bot = new Telegraf(token);
   const ADMIN_USERNAME = "laderakh".toLowerCase();
   const sessions = {};
 
+  // Start-Nachricht
   bot.start((ctx) =>
     ctx.reply(`👋 Willkommen beim Chatbot von ${customer}! Wie kann ich helfen?`)
   );
 
+  // Admin-Kommandos
   bot.command("businessinfo", (ctx) => {
     if ((ctx.from.username || "").toLowerCase() !== ADMIN_USERNAME)
       return ctx.reply("🚫 Nur Admin.");
@@ -173,6 +177,7 @@ function initCustomerBot(customer) {
     ctx.reply(`📋 Infos:\n\n${loadTextData(customer)}`);
   });
 
+  // Textnachrichten (GPT-Antwort)
   bot.on("text", async (ctx) => {
     const msg = ctx.message.text.trim();
     const uid = ctx.from.id;
@@ -201,30 +206,27 @@ Frage: "${msg}"`;
       ctx.reply(gpt.choices[0].message.content.trim());
     } catch (err) {
       console.log("GPT Fehler:", err);
-      ctx.reply("⚠️ Fehler.");
+      ctx.reply("⚠️ Fehler beim Verarbeiten der Anfrage.");
     }
   });
 
+  // Webhook oder Polling
   const RENDER_URL =
-    process.env.RENDER_URL ||
-    process.env.PRIMARY_URL ||
-    "https://chatbotki-mein.onrender.com";
+    process.env.RENDER_URL || process.env.PRIMARY_URL || "https://chatbotki-mein.onrender.com";
 
   try {
-    bot.telegram.setWebhook(`${RENDER_URL}/bot/${customer}`);
-  } catch (_) {}
-
-  app.use(`/bot/${customer}`, bot.webhookCallback(`/bot/${customer}`));
+    await bot.telegram.setWebhook(`${RENDER_URL}/bot/${customer}`);
+    app.use(`/bot/${customer}`, bot.webhookCallback(`/bot/${customer}`));
+    console.log(`Webhook gesetzt für ${customer}`);
+  } catch (e) {
+    console.warn(`Webhook nicht möglich, nutze Polling für ${customer}:`, e.message);
+    await bot.launch(); // Polling fallback
+  }
 
   bots[customer] = bot;
   console.log(`🤖 Bot gestartet: ${customer}`);
 }
 
-// === Server Start: alle Kunden laden ===
-loadCustomerList().forEach((c) => {
-  ensureCustomerDir(c);
-  initCustomerBot(c);
-});
 
 // === Admin Middleware ===
 function requireAdmin(req, res, next) {
