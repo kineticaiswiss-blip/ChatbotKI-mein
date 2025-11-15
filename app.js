@@ -145,7 +145,14 @@ function stopCustomerBot(customer) {
 // INIT CUSTOMER BOT — stabil mit Pause/Resume, Polling fallback und aktuellem Datum
 async function initCustomerBot(customer) {
   // Stoppe bestehenden Bot, falls vorhanden
-  stopCustomerBot(customer);
+  if (bots[customer]) {
+    try {
+      await bots[customer].stop();
+      console.log(`⏹️ Alte Bot-Instanz für ${customer} gestoppt.`);
+    } catch (e) {
+      console.log("Fehler beim Stoppen alter Instanz:", e.message);
+    }
+  }
 
   const token = loadBotToken(customer);
   if (!token) return console.log(`⚠️ Kein Token für ${customer}`);
@@ -155,17 +162,14 @@ async function initCustomerBot(customer) {
     return;
   }
 
-  // Bot erstellen
   const bot = new Telegraf(token);
   const ADMIN_USERNAME = "laderakh".toLowerCase();
   const sessions = {};
 
-  // Start-Nachricht
   bot.start((ctx) =>
     ctx.reply(`👋 Willkommen beim Chatbot von ${customer}! Wie kann ich helfen?`)
   );
 
-  // Admin-Kommandos
   bot.command("businessinfo", (ctx) => {
     if ((ctx.from.username || "").toLowerCase() !== ADMIN_USERNAME)
       return ctx.reply("🚫 Nur Admin.");
@@ -179,7 +183,6 @@ async function initCustomerBot(customer) {
     ctx.reply(`📋 Infos:\n\n${loadTextData(customer)}`);
   });
 
-  // Textnachrichten (GPT-Antwort)
   bot.on("text", async (ctx) => {
     const msg = ctx.message.text.trim();
     const uid = ctx.from.id;
@@ -215,7 +218,6 @@ Frage: "${msg}"`;
     }
   });
 
-  // Webhook oder Polling
   const RENDER_URL =
     process.env.RENDER_URL || process.env.PRIMARY_URL || "https://chatbotki-mein.onrender.com";
 
@@ -225,7 +227,7 @@ Frage: "${msg}"`;
     console.log(`Webhook gesetzt für ${customer}`);
   } catch (e) {
     console.warn(`Webhook nicht möglich, nutze Polling für ${customer}:`, e.message);
-    await bot.launch(); // Polling fallback
+    await bot.launch({ dropPendingUpdates: true }); // Polling fallback
   }
 
   bots[customer] = bot;
@@ -428,15 +430,21 @@ app.post(
 );
 
 app.post(
-  "/admin/add-customer-ip/:customer",
+  "/admin/token/:customer",
   requireAdmin,
   express.urlencoded({ extended: true }),
-  (req, res) => {
-    addCustomerIP(req.params.customer, req.body.ip.trim(), req.body.label || "");
-    savePausedBots();
-    res.redirect(`/admin/view/${req.params.customer}?pin=${loadAdminData().pin}`);
+  async (req, res) => {
+    const { customer } = req.params;
+    saveBotToken(customer, req.body.newToken);
+
+    stopCustomerBot(customer);
+    await initCustomerBot(customer);
+
+    res.redirect(`/admin?pin=${loadAdminData().pin}`);
   }
 );
+
+
 
 app.get("/admin/remove-customer-ip/:customer/:ip", requireAdmin, (req, res) => {
   const ipsPath = path.join(CUSTOMERS_DIR, req.params.customer, "ips.json");
@@ -484,12 +492,13 @@ app.post(
 
 
 // === Pause / Resume Bot ===
-app.get("/admin/bot/pause/:customer", requireAdmin, (req, res) => {
-  pausedBots[req.params.customer] = true;
-  stopCustomerBot(req.params.customer);
+app.get("/admin/bot/resume/:customer", requireAdmin, async (req, res) => {
+  delete pausedBots[req.params.customer];
+  await initCustomerBot(req.params.customer);
   savePausedBots();
   res.redirect(`/admin?pin=${loadAdminData().pin}`);
 });
+
 
 app.get("/admin/bot/resume/:customer", requireAdmin, (req, res) => {
   delete pausedBots[req.params.customer];
