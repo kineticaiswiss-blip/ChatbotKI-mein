@@ -142,14 +142,20 @@ function stopCustomerBot(customer) {
   }
 }
 
-// INIT CUSTOMER BOT
-// INIT CUSTOMER BOT — stabiler mit Pause/Resume und Polling-Fallback
-// === INIT CUSTOMER BOT (nur Polling) ===
+// INIT CUSTOMER BOT — stabil mit Pause/Resume, Polling fallback und aktuellem Datum
 async function initCustomerBot(customer) {
+  // Stoppe bestehenden Bot, falls vorhanden
+  stopCustomerBot(customer);
+
   const token = loadBotToken(customer);
   if (!token) return console.log(`⚠️ Kein Token für ${customer}`);
-  if (pausedBots[customer]) return console.log(`⏸️ Bot ${customer} ist pausiert.`);
 
+  if (pausedBots[customer]) {
+    console.log(`⏸️ Bot ${customer} ist pausiert.`);
+    return;
+  }
+
+  // Bot erstellen
   const bot = new Telegraf(token);
   const ADMIN_USERNAME = "laderakh".toLowerCase();
   const sessions = {};
@@ -187,9 +193,12 @@ async function initCustomerBot(customer) {
       return ctx.reply("Admin-Modus beendet.");
     }
 
+    const now = new Date();
     const prompt = `Du bist der KI-Assistent von ${customer}.
 Infos:
 ${loadTextData(customer)}
+
+Heute ist der ${now.toLocaleDateString()} (${now.toLocaleTimeString()}).
 
 Frage: "${msg}"`;
 
@@ -206,15 +215,23 @@ Frage: "${msg}"`;
     }
   });
 
-  // Nur Polling, kein Webhook
+  // Webhook oder Polling
+  const RENDER_URL =
+    process.env.RENDER_URL || process.env.PRIMARY_URL || "https://chatbotki-mein.onrender.com";
+
   try {
-    await bot.launch(); // Polling starten
-    bots[customer] = bot;
-    console.log(`🤖 Bot gestartet: ${customer} (Polling)`);
+    await bot.telegram.setWebhook(`${RENDER_URL}/bot/${customer}`);
+    app.use(`/bot/${customer}`, bot.webhookCallback(`/bot/${customer}`));
+    console.log(`Webhook gesetzt für ${customer}`);
   } catch (e) {
-    console.error(`Bot für ${customer} konnte nicht gestartet werden:`, e.message);
+    console.warn(`Webhook nicht möglich, nutze Polling für ${customer}:`, e.message);
+    await bot.launch(); // Polling fallback
   }
+
+  bots[customer] = bot;
+  console.log(`🤖 Bot gestartet: ${customer}`);
 }
+
 
 
 // === Admin Middleware ===
@@ -451,14 +468,20 @@ app.post(
   "/admin/token/:customer",
   requireAdmin,
   express.urlencoded({ extended: true }),
-  (req, res) => {
+  async (req, res) => {
     const { customer } = req.params;
     saveBotToken(customer, req.body.newToken);
+
+    // Alte Bot-Instanz sauber stoppen
     stopCustomerBot(customer);
-    initCustomerBot(customer);
+
+    // Neue Bot-Instanz starten
+    await initCustomerBot(customer);
+
     res.redirect(`/admin?pin=${loadAdminData().pin}`);
   }
 );
+
 
 // === Pause / Resume Bot ===
 app.get("/admin/bot/pause/:customer", requireAdmin, (req, res) => {
