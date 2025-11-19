@@ -1,4 +1,4 @@
-// app.js – Vollversion: Superadmin/Admin/Kunden/Bots/TG mit firmenspezifischen Antworten
+// app.js – Vollversion: Superadmin/Admin/Kunden/Bots/TG
 import express from "express";
 import fs from "fs";
 import path from "path";
@@ -17,11 +17,10 @@ const DATA_DIR = "./data";
 const ACCOUNTS_FILE = path.join(DATA_DIR, "accounts.json");
 const PENDING_FILE = path.join(DATA_DIR, "pending.json");
 const BOTS_FILE = path.join(DATA_DIR, "bots.json");
-const CUSTOMERS_DIR = path.join(DATA_DIR, "customers");
+const CUSTOMERS_FILE = path.join(DATA_DIR, "customers.json");
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-if (!fs.existsSync(CUSTOMERS_DIR)) fs.mkdirSync(CUSTOMERS_DIR, { recursive: true });
-[ACCOUNTS_FILE, PENDING_FILE, BOTS_FILE].forEach(f => { if(!fs.existsSync(f)) fs.writeFileSync(f,"[]") });
+[ACCOUNTS_FILE, PENDING_FILE, BOTS_FILE, CUSTOMERS_FILE].forEach(f => { if(!fs.existsSync(f)) fs.writeFileSync(f,"[]") });
 
 // ---------------------------
 // Helpers
@@ -31,8 +30,6 @@ function writeJSON(file,obj){fs.writeFileSync(file,JSON.stringify(obj,null,2),"u
 
 function hashPassword(pw,salt=null){salt=salt||crypto.randomBytes(16).toString("hex");return{salt,hash:crypto.scryptSync(pw,salt,64).toString("hex")}}
 function verifyPassword(pw,salt,hash){try{return crypto.timingSafeEqual(Buffer.from(crypto.scryptSync(pw,salt,64).toString("hex"),"hex"),Buffer.from(hash,"hex"))}catch{return false}}
-
-function getClientIp(req){const xf=req.headers["x-forwarded-for"]||req.headers["x-forwarded-for".toLowerCase()];if(xf)return String(xf).split(",")[0].trim();return (req.socket && req.socket.remoteAddress)||req.ip||""}
 
 function parseCookies(req){const h=req.headers?.cookie||"";const o={};h.split(";").map(s=>s.trim()).filter(Boolean).forEach(p=>{const i=p.indexOf("=");if(i>-1)o[p.slice(0,i)]=decodeURIComponent(p.slice(i+1))});return o}
 function setCookie(res,name,value,opts={}){let c=`${name}=${encodeURIComponent(value)}`;if(opts.maxAge)c+=`; Max-Age=${opts.maxAge}`;if(opts.httpOnly)c+=`; HttpOnly`;if(opts.path)c+=`; Path=${opts.path}`;if(opts.secure||process.env.NODE_ENV==="production")c+=`; Secure`;c+=`; SameSite=${opts.sameSite||'Lax'}`;res.setHeader("Set-Cookie",c)}
@@ -49,80 +46,65 @@ function savePending(p){writeJSON(PENDING_FILE,p)}
 function loadBots(){return readJSON(BOTS_FILE,[])}
 function saveBots(b){writeJSON(BOTS_FILE,b)}
 
-function ensureCustomerFile(id){ 
-  const file = path.join(CUSTOMERS_DIR, `${id}.json`);
-  if(!fs.existsSync(file)) fs.writeFileSync(file,JSON.stringify({company:"",contact:"",products:[],notes:""},null,2),"utf8");
-  return file;
-}
+function loadCustomers(){return readJSON(CUSTOMERS_FILE,[])}
+function saveCustomers(c){writeJSON(CUSTOMERS_FILE,c)}
 
 // ---------------------------
 // Middleware
 // ---------------------------
 function requireAuth(req,res,next){
-  const cookies=parseCookies(req); 
-  const token=cookies.deviceToken; 
-  if(!token) return res.redirect("/register");
-  const accounts=loadAccounts(); 
-  const acc=accounts.find(a=>a.deviceToken===token); 
-  if(!acc) return res.redirect("/register"); 
-  req.user=acc; 
-  next();
+  const cookies=parseCookies(req); const token=cookies.deviceToken; if(!token)return res.redirect("/register");
+  const accounts=loadAccounts(); const acc=accounts.find(a=>a.deviceToken===token); if(!acc)return res.redirect("/register"); req.user=acc; next();
 }
 
 function requireAdmin(req,res,next){
-  if(!req.user) return res.redirect("/register");
-  if(req.user.role==="admin"||req.user.role==="superadmin") return next();
+  if(!req.user)return res.redirect("/register");
+  if(req.user.role==="admin"||req.user.role==="superadmin")return next();
   res.send("🚫 Zugriff verweigert. Nur Admins.");
 }
-
-// ---------------------------
-// OpenAI setup
-// ---------------------------
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 // ---------------------------
 // Telegram Bots
 // ---------------------------
 const botsInstances = {}; 
-async function initBot(botToken, botId, customerId){
+async function initBot(botToken, botId){
   const bot = new Telegraf(botToken);
   const accounts = loadAccounts();
   const superadmin = accounts.find(a=>a.role==="superadmin");
   const admins = accounts.filter(a=>a.role==="admin");
-  const customer = accounts.find(a=>a.id===customerId);
+  const customersWithBot = accounts.filter(a=>a.assignedBots?.includes(botId));
 
   bot.start(ctx=>{
     const uid=ctx.from.id;
     if([superadmin, ...admins].some(a=>a.telegramId===uid)) return ctx.reply("Admin-Modus aktiviert.");
-    if(customer && customer.telegramId===uid) return ctx.reply("Bot-Modus aktiviert.");
+    if(customersWithBot.some(c=>c.telegramId===uid)) return ctx.reply("Bot-Modus aktiviert.");
     ctx.reply("🚫 Du bist kein berechtigter Benutzer.");
   });
 
-  bot.on("text", async ctx=>{
+  bot.on("text",async ctx=>{
     const uid=ctx.from.id;
     const isAdmin=[superadmin,...admins].some(a=>a.telegramId===uid);
-    const isCustomer=customer?.telegramId===uid;
-    if(!isAdmin && !isCustomer) return ctx.reply("🚫 Keine Rechte.");
+    const isCustomer=customersWithBot.some(c=>c.telegramId===uid);
+    if(!isAdmin && !isCustomer)return ctx.reply("🚫 Keine Rechte.");
+    
+    const msg = ctx.message.text.trim();
+    const customerInfoFile = path.join(DATA_DIR, "customer_info", botId+".txt");
+    let infoContent = "";
+    if(fs.existsSync(customerInfoFile)) infoContent = fs.readFileSync(customerInfoFile,"utf8");
 
-    const msg=ctx.message.text.trim();
-    const infoFile = ensureCustomerFile(customerId);
-    const info = JSON.parse(fs.readFileSync(infoFile,'utf8'));
-
-    const prompt = `Du bist ein Assistent für ${info.company}. Beantworte die Frage nur anhand der Informationen: ${JSON.stringify(info)}. Frage: ${msg}`;
-    try {
-      const gptResp = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [{role:"system", content: prompt}],
-        max_tokens: 300,
-        temperature: 0
-      });
-      ctx.reply(gptResp.choices[0].message.content.trim());
-    } catch(e){ ctx.reply("⚠️ Fehler beim Antworten."); console.error(e); }
+    // Spezifische Antwort
+    if(msg.startsWith("/info")) return ctx.reply(infoContent || "Keine Infos vorhanden.");
+    if(isAdmin) ctx.reply("✅ Admin-Befehl ausgeführt.");
+    else if(isCustomer) ctx.reply("✅ Kunde-Befehl ausgeführt.");
+    else ctx.reply("⚠️ Befehl nicht erlaubt.");
   });
 
-  try{await bot.launch({dropPendingUpdates:true})}catch{}
+  try{await bot.launch({dropPendingUpdates:true})}catch(console.error);
   botsInstances[botId]=bot;
 }
+
+// Alle Bots beim Start initialisieren
+loadBots().forEach(b=>initBot(b.token,b.id));
 
 // ---------------------------
 // Routes
@@ -141,9 +123,9 @@ app.get("/register",(req,res)=>{
         Passwort: <input name="password" type="password" required/>
         <button>Erstellen</button>
       </form>`);
-  } else if(token && accounts.find(a=>a.deviceToken===token)){
+  }else if(token && accounts.find(a=>a.deviceToken===token)){
     res.redirect("/dashboard");
-  } else {
+  }else{
     res.send(`<h2>Neues Gerät – Registrierung</h2>
       <form method="POST">
         Vorname: <input name="firstName" required/><br/>
@@ -164,16 +146,14 @@ app.post("/register",(req,res)=>{
   const cookies=parseCookies(req);
   const token=cookies.deviceToken;
   if(accounts.length===0){
-    // Superadmin erstellen
     const deviceToken=crypto.randomBytes(12).toString("hex");
     const {salt,hash}=hashPassword(req.body.password);
-    accounts.push({id:crypto.randomBytes(6).toString("hex"),deviceToken,role:"superadmin",passwordHash:hash,salt,firstName:"Super",lastName:"Admin",assignedBots:[],telegramId:null});
+    accounts.push({deviceToken,role:"superadmin",passwordHash:hash,salt,firstName:"Super",lastName:"Admin",assignedBots:[],telegramId:null});
     saveAccounts(accounts);
     setCookie(res,"deviceToken",deviceToken,{httpOnly:true});
     res.send("Superadmin erstellt. <a href='/dashboard'>Dashboard</a>");
     return;
   }
-  // Normale Registrierung → pending
   pending.push({...req.body,id:crypto.randomBytes(8).toString("hex"),status:"pending",created:Date.now()});
   savePending(pending);
   res.send("Registrierung abgeschickt. Superadmin/Admin wird prüfen.");
@@ -188,30 +168,25 @@ app.get("/dashboard",requireAuth,(req,res)=>{
 
   if(req.user.role==="customer"){
     html+="<h2>Deine Bots</h2>";
-    (req.user.assignedBots||[]).forEach(bid=>{
-      const b=bots.find(bb=>bb.id===bid);
-      if(b) html+=`<p>${b.name}</p>`;
-    });
+    if(req.user.assignedBots?.length>0){
+      req.user.assignedBots.forEach(bid=>{
+        const b=bots.find(bb=>bb.id===bid);
+        if(b) html+=`<p>${b.name}</p>`;
+      });
+    } else html+="<p>Kein Bot zugewiesen</p>";
     res.send(html);
     return;
   }
 
-  // Admin / Superadmin
+  // Admin / Superadmin Dashboard
   html+="<h2>Pending Registrierungen</h2>";
   pending.forEach(p=>{
     html+=`<p>${p.firstName} ${p.lastName} (${p.role}) - <a href="/approve/${p.id}?as=customer">Als Kunde</a> | <a href="/approve/${p.id}?as=admin">Als Admin</a> | <a href="/reject/${p.id}">Ablehnen</a></p>`;
   });
 
-  html+="<h2>Kunden & Info-Dateien</h2>";
+  html+="<h2>Kunden</h2>";
   accounts.filter(a=>a.role==="customer").forEach(c=>{
-    const infoFile = ensureCustomerFile(c.id);
-    const info = fs.readFileSync(infoFile,'utf8');
-    html+=`<p>${c.firstName} ${c.lastName} – Bots: ${(c.assignedBots||[]).map(id=>bots.find(b=>b.id===id)?.name).join(", ")}</p>`;
-    html+=`<pre>${info}</pre>
-           <form method="POST" action="/updateInfo/${c.id}">
-             <textarea name="info" rows="8" cols="60">${info}</textarea>
-             <button>Speichern</button>
-           </form>`;
+    html+=`<p>${c.firstName} ${c.lastName} - Bots: ${(c.assignedBots||[]).map(id=>bots.find(b=>b.id===id)?.name).join(", ")}</p>`;
   });
 
   html+="<h2>Bots</h2>";
@@ -219,13 +194,16 @@ app.get("/dashboard",requireAuth,(req,res)=>{
     html+=`<p>${b.name} - ID: ${b.id} - Zugewiesen an: ${(accounts.filter(a=>a.assignedBots?.includes(b.id)).map(a=>a.firstName)).join(", ")}</p>`;
   });
 
-  res.send(html);
-});
+  html+=`
+    <h2>Neuen Bot erstellen</h2>
+    <form method="POST" action="/addbot">
+      Name: <input name="name" required/><br/>
+      Token: <input name="token" required/><br/>
+      <button>Erstellen</button>
+    </form>
+  `;
 
-app.post("/updateInfo/:customerId", requireAuth, requireAdmin, (req,res)=>{
-  const infoFile = ensureCustomerFile(req.params.customerId);
-  fs.writeFileSync(infoFile, req.body.info, 'utf8');
-  res.redirect("/dashboard");
+  res.send(html);
 });
 
 // --- Approve / Reject ---
@@ -233,12 +211,12 @@ app.get("/approve/:id",(req,res)=>{
   const accounts=loadAccounts();
   const pending=loadPending();
   const {id}=req.params;
-  const as=req.query.as; // customer/admin
+  const as=req.query.as;
   const p=pending.find(r=>r.id===id);
   if(!p){res.send("Nicht gefunden"); return;}
   const deviceToken=crypto.randomBytes(12).toString("hex");
   const {salt,hash}=hashPassword("changeme");
-  accounts.push({...p,id:crypto.randomBytes(6).toString("hex"),deviceToken,passwordHash:hash,salt,role:as,assignedBots:[],telegramId:null});
+  accounts.push({...p,deviceToken,passwordHash:hash,salt,role:as,assignedBots:[],telegramId:null});
   saveAccounts(accounts);
   savePending(pending.filter(r=>r.id!==id));
   res.redirect("/dashboard");
@@ -252,13 +230,13 @@ app.get("/reject/:id",(req,res)=>{
 
 // --- Bot hinzufügen (Admin) ---
 app.post("/addbot",requireAuth,requireAdmin,(req,res)=>{
-  const {name,token,customerId}=req.body;
+  const {name,token}=req.body;
   const bots=loadBots();
   const botId=crypto.randomBytes(6).toString("hex");
-  bots.push({id:botId,name,token,customerId});
+  bots.push({id:botId,name,token});
   saveBots(bots);
-  initBot(token, botId, customerId);
-  res.send("Bot hinzugefügt");
+  initBot(token,botId);
+  res.send("Bot hinzugefügt. <a href='/dashboard'>Zurück zum Dashboard</a>");
 });
 
 // ---------------------------
