@@ -4,7 +4,6 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import { Telegraf } from "telegraf";
-import OpenAI from "openai";
 
 const app = express();
 app.use(express.json());
@@ -31,46 +30,40 @@ function writeJSON(file,obj){fs.writeFileSync(file,JSON.stringify(obj,null,2),"u
 function hashPassword(pw,salt=null){salt=salt||crypto.randomBytes(16).toString("hex");return{salt,hash:crypto.scryptSync(pw,salt,64).toString("hex")}}
 function verifyPassword(pw,salt,hash){try{return crypto.timingSafeEqual(Buffer.from(crypto.scryptSync(pw,salt,64).toString("hex"),"hex"),Buffer.from(hash,"hex"))}catch{return false}}
 
-function getClientIp(req){const xf=req.headers["x-forwarded-for"]||req.headers["x-forwarded-for".toLowerCase()];if(xf)return String(xf).split(",")[0].trim();return (req.socket && req.socket.remoteAddress)||req.ip||""}
-
 function parseCookies(req){const h=req.headers?.cookie||"";const o={};h.split(";").map(s=>s.trim()).filter(Boolean).forEach(p=>{const i=p.indexOf("=");if(i>-1)o[p.slice(0,i)]=decodeURIComponent(p.slice(i+1))});return o}
 function setCookie(res,name,value,opts={}){let c=`${name}=${encodeURIComponent(value)}`;if(opts.maxAge)c+=`; Max-Age=${opts.maxAge}`;if(opts.httpOnly)c+=`; HttpOnly`;if(opts.path)c+=`; Path=${opts.path}`;if(opts.secure||process.env.NODE_ENV==="production")c+=`; Secure`;c+=`; SameSite=${opts.sameSite||'Lax'}`;res.setHeader("Set-Cookie",c)}
 
-// ---------------------------
-// Load / Save Accounts
-// ---------------------------
-function loadAccounts(){return readJSON(ACCOUNTS_FILE,[])}
-function saveAccounts(a){writeJSON(ACCOUNTS_FILE,a)}
+function getClientIp(req){const xf=req.headers["x-forwarded-for"]||req.headers["x-forwarded-for".toLowerCase()];if(xf)return String(xf).split(",")[0].trim();return (req.socket && req.socket.remoteAddress)||req.ip||""}
 
 // ---------------------------
-// Load / Save Pending Requests
+// Load / Save
 // ---------------------------
-function loadPending(){return readJSON(PENDING_FILE,[])}
-function savePending(p){writeJSON(PENDING_FILE,p)}
-
-// ---------------------------
-// Load / Save Bots
-// ---------------------------
-function loadBots(){return readJSON(BOTS_FILE,[])}
-function saveBots(b){writeJSON(BOTS_FILE,b)}
-
-// ---------------------------
-// Load / Save Customers
-// ---------------------------
-function loadCustomers(){return readJSON(CUSTOMERS_FILE,[])}
-function saveCustomers(c){writeJSON(CUSTOMERS_FILE,c)}
+const loadAccounts=()=>readJSON(ACCOUNTS_FILE,[]);
+const saveAccounts=(a)=>writeJSON(ACCOUNTS_FILE,a);
+const loadPending=()=>readJSON(PENDING_FILE,[]);
+const savePending=(p)=>writeJSON(PENDING_FILE,p);
+const loadBots=()=>readJSON(BOTS_FILE,[]);
+const saveBots=(b)=>writeJSON(BOTS_FILE,b);
+const loadCustomers=()=>readJSON(CUSTOMERS_FILE,[]);
+const saveCustomers=(c)=>writeJSON(CUSTOMERS_FILE,c);
 
 // ---------------------------
 // Middleware
 // ---------------------------
 function requireAuth(req,res,next){
-  const cookies=parseCookies(req); const token=cookies.deviceToken; if(!token)return res.redirect("/register");
-  const accounts=loadAccounts(); const acc=accounts.find(a=>a.deviceToken===token); if(!acc)return res.redirect("/register"); req.user=acc; next();
+  const cookies=parseCookies(req); 
+  const token=cookies.deviceToken; 
+  if(!token) return res.redirect("/register");
+  const accounts=loadAccounts(); 
+  const acc=accounts.find(a=>a.deviceToken===token); 
+  if(!acc) return res.redirect("/register"); 
+  req.user=acc; 
+  next();
 }
 
 function requireAdmin(req,res,next){
-  if(!req.user)return res.redirect("/register");
-  if(req.user.role==="admin"||req.user.role==="superadmin")return next();
+  if(!req.user) return res.redirect("/register");
+  if(req.user.role==="admin"||req.user.role==="superadmin") return next();
   res.send("🚫 Zugriff verweigert. Nur Admins.");
 }
 
@@ -79,6 +72,7 @@ function requireAdmin(req,res,next){
 // ---------------------------
 const botsInstances = {}; 
 async function initBot(botToken, botId){
+  if(!botToken) return;
   const bot = new Telegraf(botToken);
   const accounts = loadAccounts();
   const superadmin = accounts.find(a=>a.role==="superadmin");
@@ -97,32 +91,27 @@ async function initBot(botToken, botId){
     const isAdmin=[superadmin,...admins].some(a=>a.telegramId===uid);
     const isCustomer=customersWithBot.some(c=>c.telegramId===uid);
     if(!isAdmin && !isCustomer)return ctx.reply("🚫 Keine Rechte.");
-    // Befehle je nach Rolle
     const msg=ctx.message.text.trim();
     if(msg.startsWith("/data")||msg.startsWith("/setinfo")){
-      if(isAdmin) ctx.reply("✅ Admin-Befehl ausgeführt.");
-      else if(isCustomer) ctx.reply("✅ Kunde-Befehl ausgeführt."); // eingeschränkt
+      ctx.reply(isAdmin ? "✅ Admin-Befehl ausgeführt." : "✅ Kunde-Befehl ausgeführt."); 
       return;
     }
     ctx.reply("⚠️ Befehl nicht erlaubt.");
   });
 
-  try{await bot.launch({dropPendingUpdates:true})}catch{}
-
+  try{await bot.launch({dropPendingUpdates:true})}catch(console.error);
   botsInstances[botId]=bot;
 }
 
 // ---------------------------
 // Routes
 // ---------------------------
-
-// --- Registrierung / Erstes Gerät ---
 app.get("/register",(req,res)=>{
   const accounts=loadAccounts();
   const cookies=parseCookies(req);
   const token=cookies.deviceToken;
+
   if(accounts.length===0){
-    // Erstes Gerät = superadmin
     const deviceToken=crypto.randomBytes(12).toString("hex");
     setCookie(res,"deviceToken",deviceToken,{httpOnly:true});
     res.send(`<h2>Erstes Gerät → Superadmin</h2>
@@ -130,9 +119,9 @@ app.get("/register",(req,res)=>{
         Passwort: <input name="password" type="password" required/>
         <button>Erstellen</button>
       </form>`);
-  }else if(token && accounts.find(a=>a.deviceToken===token)){
+  } else if(token && accounts.find(a=>a.deviceToken===token)){
     res.redirect("/dashboard");
-  }else{
+  } else {
     res.send(`<h2>Neues Gerät – Registrierung</h2>
       <form method="POST">
         Vorname: <input name="firstName" required/><br/>
@@ -152,8 +141,8 @@ app.post("/register",(req,res)=>{
   const pending=loadPending();
   const cookies=parseCookies(req);
   const token=cookies.deviceToken;
+
   if(accounts.length===0){
-    // Superadmin erstellen
     const deviceToken=crypto.randomBytes(12).toString("hex");
     const {salt,hash}=hashPassword(req.body.password);
     accounts.push({deviceToken,role:"superadmin",passwordHash:hash,salt,firstName:"Super",lastName:"Admin",assignedBots:[],telegramId:null});
@@ -162,19 +151,18 @@ app.post("/register",(req,res)=>{
     res.send("Superadmin erstellt. <a href='/dashboard'>Dashboard</a>");
     return;
   }
-  // Normale Registrierung → in pending
+
   pending.push({...req.body,id:crypto.randomBytes(8).toString("hex"),status:"pending",created:Date.now()});
   savePending(pending);
   res.send("Registrierung abgeschickt. Superadmin/Admin wird prüfen.");
 });
 
-// --- Dashboard ---
 app.get("/dashboard",requireAuth,(req,res)=>{
   const accounts=loadAccounts();
   const pending=loadPending();
   const bots=loadBots();
-  const customers=loadCustomers();
   let html=`<h1>Dashboard</h1><p>Hallo ${req.user.firstName} ${req.user.lastName} [${req.user.role}]</p>`;
+
   if(req.user.role==="customer"){
     html+="<h2>Deine Bots</h2>";
     if(req.user.assignedBots?.length>0){
@@ -186,35 +174,36 @@ app.get("/dashboard",requireAuth,(req,res)=>{
     res.send(html);
     return;
   }
-  // Admin/Superadmin
+
   html+="<h2>Pending Registrierungen</h2>";
   pending.forEach(p=>{
     html+=`<p>${p.firstName} ${p.lastName} (${p.role}) - <a href="/approve/${p.id}?as=customer">Als Kunde</a> | <a href="/approve/${p.id}?as=admin">Als Admin</a> | <a href="/reject/${p.id}">Ablehnen</a></p>`;
   });
+
   html+="<h2>Kunden</h2>";
   accounts.filter(a=>a.role==="customer").forEach(c=>{
     html+=`<p>${c.firstName} ${c.lastName} - Bots: ${(c.assignedBots||[]).map(id=>bots.find(b=>b.id===id)?.name).join(", ")}</p>`;
   });
+
   html+="<h2>Bots</h2>";
   bots.forEach(b=>{
     html+=`<p>${b.name} - ID: ${b.id} - Zugewiesen an: ${(accounts.filter(a=>a.assignedBots?.includes(b.id)).map(a=>a.firstName)).join(", ")}</p>`;
   });
+
   res.send(html);
 });
 
-// --- Approve / Reject ---
 app.get("/approve/:id",(req,res)=>{
   const accounts=loadAccounts();
   const pending=loadPending();
   const {id}=req.params;
-  const as=req.query.as; // customer/admin
+  const as=req.query.as;
   const p=pending.find(r=>r.id===id);
   if(!p){res.send("Nicht gefunden"); return;}
   const deviceToken=crypto.randomBytes(12).toString("hex");
   const {salt,hash}=hashPassword("changeme");
   accounts.push({...p,deviceToken,passwordHash:hash,salt,role:as,assignedBots:[],telegramId:null});
   saveAccounts(accounts);
-  // aus pending entfernen
   savePending(pending.filter(r=>r.id!==id));
   res.redirect("/dashboard");
 });
@@ -225,9 +214,9 @@ app.get("/reject/:id",(req,res)=>{
   res.redirect("/dashboard");
 });
 
-// --- Bot hinzufügen (Admin) ---
 app.post("/addbot",requireAuth,requireAdmin,(req,res)=>{
   const {name,token}=req.body;
+  if(!name || !token){res.send("Name und Token erforderlich"); return;}
   const bots=loadBots();
   const botId=crypto.randomBytes(6).toString("hex");
   bots.push({id:botId,name,token});
@@ -241,5 +230,3 @@ app.post("/addbot",requireAuth,requireAdmin,(req,res)=>{
 // ---------------------------
 const PORT = process.env.PORT || 10000;
 app.listen(PORT,()=>console.log(`Server läuft auf Port ${PORT}`));
-
-
