@@ -140,7 +140,11 @@ async function initBot(botToken, botId){
         }catch(e){console.error(e); ctx.reply("⚠️ Fehler beim Beantworten.");}
     });
 
-    try{await bot.launch({dropPendingUpdates:true});}catch(console.error);
+    try {
+    await bot.launch({ dropPendingUpdates: true });
+} catch (err) {
+    console.error(err);
+}
     botsInstances[botId] = bot;
 }
 
