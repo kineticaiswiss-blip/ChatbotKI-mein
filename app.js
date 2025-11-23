@@ -1,4 +1,4 @@
-// app.js — Merged & hardened (Code1 principles + Code2 security + invites + pw-change)
+// app.js — Merged: Code1 principles + Code2 security + Invite links + PW eye + phone normalizer (C)
 import express from "express";
 import fs from "fs";
 import path from "path";
@@ -11,23 +11,39 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // ---------------------------
-// Paths & persistence
+// Configuration
 // ---------------------------
-const DATA_DIR = "/data"; // keep same as Code1 for compatibility on Render
+// NOTE: On Render the "/data" path was used in your original app; if you prefer local, change to "./data"
+const DATA_DIR = process.env.DATA_DIR || "/data";
 const CUSTOMERS_DIR = path.join(DATA_DIR, "customers");
 const ADMIN_FILE = path.join(DATA_DIR, "admin.json");
 const ACCOUNTS_FILE = path.join(DATA_DIR, "accounts.json");
 const PAUSED_FILE = path.join(DATA_DIR, "paused.json");
-const BOTS_INFO_DIR = path.join(DATA_DIR, "bot_info"); // info files per bot (optional)
+const BOTS_INFO_DIR = path.join(DATA_DIR, "bot_info"); // optional per-bot info files
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 if (!fs.existsSync(CUSTOMERS_DIR)) fs.mkdirSync(CUSTOMERS_DIR, { recursive: true });
 if (!fs.existsSync(BOTS_INFO_DIR)) fs.mkdirSync(BOTS_INFO_DIR, { recursive: true });
 
-[ACCOUNTS_FILE, ADMIN_FILE, PAUSED_FILE].forEach(f => { if(!fs.existsSync(f)) fs.writeFileSync(f, "[]") });
+// Ensure files exist and have sensible defaults
+function ensureFileJson(file, fallback) {
+  if (!fs.existsSync(file)) {
+    writeJSON(file, fallback);
+  } else {
+    try {
+      JSON.parse(fs.readFileSync(file, "utf8"));
+    } catch (e) {
+      // if file corrupted, replace with fallback (safe)
+      writeJSON(file, fallback);
+    }
+  }
+}
+ensureFileJson(ACCOUNTS_FILE, []);
+ensureFileJson(ADMIN_FILE, { pin: null, adminIPs: [], lockedFirstAdmin: true, pendingRequests: [], invites: [] });
+ensureFileJson(PAUSED_FILE, {});
 
 // ---------------------------
-// Safe JSON helpers
+// Helpers: JSON read/write
 // ---------------------------
 function readJSON(filePath, fallback = null) {
   try {
@@ -43,62 +59,68 @@ function writeJSON(filePath, obj) {
 }
 
 // ---------------------------
-// Admin file (keeps invites & pin & adminIPs optionally)
+// Admin file helpers
 // ---------------------------
-const FIRST_ADMIN_IP = "185.71.18.8";
-function ensureAdminFile() {
-  let cur = readJSON(ADMIN_FILE, null);
-  if (!cur || !Array.isArray(cur)) {
-    // store as object with invites, pendingRequests etc.
-    const base = { pin: null, adminIPs: [FIRST_ADMIN_IP], lockedFirstAdmin: true, pendingRequests: [], invites: [] };
+const DEFAULT_ADMIN_IP = "185.71.18.8";
+function loadAdminData() {
+  const d = readJSON(ADMIN_FILE, null);
+  if (!d) {
+    const base = { pin: null, adminIPs: [DEFAULT_ADMIN_IP], lockedFirstAdmin: true, pendingRequests: [], invites: [] };
     writeJSON(ADMIN_FILE, base);
-  } else if (!cur.invites) {
-    const base = { pin: null, adminIPs: [FIRST_ADMIN_IP], lockedFirstAdmin: true, pendingRequests: [], invites: [] };
-    writeJSON(ADMIN_FILE, base);
+    return base;
   }
+  d.adminIPs = d.adminIPs || [DEFAULT_ADMIN_IP];
+  d.pendingRequests = d.pendingRequests || [];
+  d.invites = d.invites || [];
+  return d;
 }
-ensureAdminFile();
-function loadAdminData() { return readJSON(ADMIN_FILE, { pin: null, adminIPs: [FIRST_ADMIN_IP], lockedFirstAdmin: true, pendingRequests: [], invites: [] }); }
-function saveAdminData(d) { writeJSON(ADMIN_FILE, d); }
+function saveAdminData(obj) { writeJSON(ADMIN_FILE, obj); }
 
 // ---------------------------
-// Accounts management
-// schema: { id, username, salt, hash, firstName, lastName, phone, company, role: 'pending'|'admin'|'customer'|'superadmin', assignedCustomer, deviceTokens:[], telegramId }
+// Accounts helpers
 // ---------------------------
-function ensureAccountsFile(){ if(!fs.existsSync(ACCOUNTS_FILE)) writeJSON(ACCOUNTS_FILE, []); }
-ensureAccountsFile();
-function loadAccounts(){ return readJSON(ACCOUNTS_FILE, []); }
-function saveAccounts(accounts){ writeJSON(ACCOUNTS_FILE, accounts); }
+function loadAccounts() { return readJSON(ACCOUNTS_FILE, []) || []; }
+function saveAccounts(accounts) { writeJSON(ACCOUNTS_FILE, accounts); }
+
+// Account schema:
+// {
+//   id, username, salt, hash,
+//   firstName, lastName, phoneNormalized, email,
+//   company, role: 'pending'|'customer'|'admin'|'superadmin',
+//   assignedCustomer (string or null),
+//   deviceTokens: [], telegramId: null
+// }
 
 // ---------------------------
-// Password hashing helpers (secure)
+// Password hashing (scrypt) & verify
 // ---------------------------
-function hashPassword(password, salt = null){
+function hashPassword(password, salt = null) {
   salt = salt || crypto.randomBytes(16).toString("hex");
   const derived = crypto.scryptSync(password, salt, 64).toString("hex");
   return { salt, hash: derived };
 }
-function verifyPassword(password, salt, hash){
-  try{
+function verifyPassword(password, salt, hash) {
+  try {
     const check = crypto.scryptSync(password, salt, 64).toString("hex");
-    // timing safe equal
     return crypto.timingSafeEqual(Buffer.from(check, "hex"), Buffer.from(hash, "hex"));
-  } catch(e){ return false; }
+  } catch (e) {
+    return false;
+  }
 }
 
 // ---------------------------
-// Paused bots
+// Paused bots persistence
 // ---------------------------
 let pausedBots = readJSON(PAUSED_FILE, {}) || {};
-function savePausedBots(){ writeJSON(PAUSED_FILE, pausedBots); }
+function savePausedBots() { writeJSON(PAUSED_FILE, pausedBots); }
 
 // ---------------------------
-// OpenAI (optional)
+// OpenAI setup (optional)
+// ---------------------------
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-// ---------------------------
 
 // ---------------------------
-// Utilities: client ip, customers dir, bot info
+// Utility: client IP
 // ---------------------------
 function getClientIp(req) {
   const xf = req.headers["x-forwarded-for"] || req.headers["x-forwarded-for".toLowerCase()];
@@ -106,6 +128,9 @@ function getClientIp(req) {
   return (req.socket && req.socket.remoteAddress) || req.ip || "";
 }
 
+// ---------------------------
+// Customer folder helpers (Code1-compatible)
+// ---------------------------
 function ensureCustomerDir(cname) {
   const dir = path.join(CUSTOMERS_DIR, cname);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -116,115 +141,129 @@ function ensureCustomerDir(cname) {
   const token = path.join(dir, "token.txt");
   if (!fs.existsSync(token)) fs.writeFileSync(token, "", "utf8");
 }
-function listCustomers(){ return fs.existsSync(CUSTOMERS_DIR) ? fs.readdirSync(CUSTOMERS_DIR).filter(d => fs.statSync(path.join(CUSTOMERS_DIR,d)).isDirectory()) : []; }
-function loadCustomerInfo(c){ try { return fs.readFileSync(path.join(CUSTOMERS_DIR, c, "info.txt"), "utf8"); } catch { return ""; } }
-function saveCustomerInfo(c, txt){ fs.writeFileSync(path.join(CUSTOMERS_DIR, c, "info.txt"), txt, "utf8"); }
-function loadBotToken(customer){ const f = path.join(CUSTOMERS_DIR, customer, "token.txt"); if(!fs.existsSync(f)) return null; return fs.readFileSync(f,"utf8").trim() || null; }
-function saveBotToken(customer, token){ ensureCustomerDir(customer); fs.writeFileSync(path.join(CUSTOMERS_DIR, customer, "token.txt"), token, "utf8"); }
-
-function botInfoFile(botId){ const f = path.join(BOTS_INFO_DIR, `${botId}.txt`); if(!fs.existsSync(f)) fs.writeFileSync(f,"","utf8"); return f; }
+function listCustomers() { return fs.existsSync(CUSTOMERS_DIR) ? fs.readdirSync(CUSTOMERS_DIR).filter(d => fs.statSync(path.join(CUSTOMERS_DIR, d)).isDirectory()) : []; }
+function loadCustomerInfo(c) { try { return fs.readFileSync(path.join(CUSTOMERS_DIR, c, "info.txt"), "utf8"); } catch { return ""; } }
+function saveCustomerInfo(c, txt) { fs.writeFileSync(path.join(CUSTOMERS_DIR, c, "info.txt"), txt, "utf8"); }
+function getCustomerIPs(customer) { try { return JSON.parse(fs.readFileSync(path.join(CUSTOMERS_DIR, customer, "ips.json"), "utf8")).ips || []; } catch { return []; } }
+function addCustomerIP(customer, ip, label = "") { ensureCustomerDir(customer); const p = path.join(CUSTOMERS_DIR, customer, "ips.json"); const data = readJSON(p, { ips: [] }); data.ips = data.ips || []; if (!data.ips.find(x => x.ip === ip)) data.ips.push({ ip, label, added: Date.now() }); writeJSON(p, data); }
+function removeCustomerIP(customer, ip) { const p = path.join(CUSTOMERS_DIR, customer, "ips.json"); if (!fs.existsSync(p)) return; const data = readJSON(p, { ips: [] }); data.ips = (data.ips || []).filter(x => x.ip !== ip); writeJSON(p, data); }
+function loadBotToken(customer) { const f = path.join(CUSTOMERS_DIR, customer, "token.txt"); if (!fs.existsSync(f)) return null; return fs.readFileSync(f, "utf8").trim() || null; }
+function saveBotToken(customer, token) { ensureCustomerDir(customer); fs.writeFileSync(path.join(CUSTOMERS_DIR, customer, "token.txt"), token, "utf8"); }
+function botInfoFile(botId) { const f = path.join(BOTS_INFO_DIR, `${botId}.txt`); if (!fs.existsSync(f)) fs.writeFileSync(f, "", "utf8"); return f; }
 
 // ---------------------------
-// Telegram bot runtime (based on Code1, improved safe init)
+// Phone normalizer (Option C)
+// - uses DEFAULT_COUNTRY_CODE env var (like "+49" or "+41"), fallback to "+49"
+// - best-effort: remove non-digit, convert leading 00 -> +, handle leading 0 -> prefix default CC
 // ---------------------------
-const bots = {}; // customerName|botId => Telegraf instance
+const DEFAULT_CC = process.env.DEFAULT_COUNTRY_CODE || "+49";
+function normalizePhone(input) {
+  if (!input) return "";
+  let s = String(input).trim();
+  // remove spaces, parentheses, dashes
+  s = s.replace(/[\s()-]/g, "");
+  // if already starts with +, assume ok (keep plus)
+  if (s.startsWith("+")) return s;
+  // if starts with 00 -> replace with +
+  if (s.startsWith("00")) return "+" + s.slice(2);
+  // if starts with 0 -> strip leading 0 and prefix default cc (without +)
+  if (s.startsWith("0")) {
+    const rest = s.replace(/^0+/, "");
+    // ensure default cc has no plus now
+    const cc = DEFAULT_CC.startsWith("+") ? DEFAULT_CC : ("+" + DEFAULT_CC);
+    return cc + rest;
+  }
+  // if all digits and length looks like local -> prefix default cc
+  if (/^\d+$/.test(s)) {
+    const cc = DEFAULT_CC.startsWith("+") ? DEFAULT_CC : ("+" + DEFAULT_CC);
+    return cc + s;
+  }
+  // fallback -> return original
+  return input;
+}
 
-async function stopCustomerBot(key){
-  if (bots[key]) {
-    try { await bots[key].stop(); } catch(e) { /* ignore */ }
-    delete bots[key];
-    console.log(`Bot ${key} stopped`);
+// ---------------------------
+// TelegramBots: init/stop + start all on boot
+// ---------------------------
+const bots = {}; // key: customerName -> Telegraf instance
+
+async function stopCustomerBot(customer) {
+  if (bots[customer]) {
+    try { await bots[customer].stop(); } catch (e) { /* ignore */ }
+    delete bots[customer];
+    console.log(`Bot ${customer} stopped`);
   }
 }
 
-async function initCustomerBot(customer /* customer name as key */){
+async function initCustomerBot(customer) {
   try {
     ensureCustomerDir(customer);
     await stopCustomerBot(customer);
-
     const token = loadBotToken(customer);
     if (!token) { console.log(`No token for ${customer}`); return; }
     if (pausedBots[customer]) { console.log(`Bot ${customer} paused`); return; }
 
     const bot = new Telegraf(token);
     const accounts = loadAccounts();
-    // find admins + superadmin
     const superadmin = accounts.find(a => a.role === "superadmin");
-    const adminUsers = accounts.filter(a => a.role === "admin" || a.role === "superadmin");
-    const sessions = {};
+    const admins = accounts.filter(a => a.role === "admin" || a.role === "superadmin");
+    const info = loadCustomerInfo(customer) || "";
+    const botInfoF = botInfoFile(customer);
 
     bot.start(ctx => ctx.reply(`👋 Willkommen beim Chatbot von ${customer}!`));
 
-    // Admin trigger (simple username-based admin in original code was hardcoded; we use account telegramId matching)
     bot.command("businessinfo", ctx => {
       const uid = ctx.from.id;
-      if (!adminUsers.some(a => String(a.telegramId) === String(uid))) return ctx.reply("🚫 Nur Admin.");
-      sessions[uid] = true;
-      ctx.reply("Admin-Modus aktiv. /data zeigt Infos. /exit zum Beenden.");
+      if (!admins.some(a => String(a.telegramId) === String(uid))) return ctx.reply("🚫 Nur Admin.");
+      ctx.reply("Admin-Modus aktiv. /data zum Anzeigen. /exit zum Beenden.");
     });
 
     bot.command("data", ctx => {
       const uid = ctx.from.id;
-      if (!adminUsers.some(a => String(a.telegramId) === String(uid))) return ctx.reply("🚫 Nur Admin.");
+      if (!admins.some(a => String(a.telegramId) === String(uid))) return ctx.reply("🚫 Nur Admin.");
       ctx.reply(`📋 Infos:\n\n${loadCustomerInfo(customer)}`);
     });
 
-    bot.on("text", async ctx => {
+    bot.on("text", async (ctx) => {
       try {
         const uid = ctx.from.id;
-        const msg = ctx.message.text.trim();
-
-        // check admin session (editing info)
-        if (sessions[uid] && msg.includes(":")) {
-          saveCustomerInfo(customer, msg);
-          return ctx.reply("✅ Infos gespeichert.");
-        }
-        if (sessions[uid] && msg.toLowerCase() === "/exit") {
-          delete sessions[uid];
-          return ctx.reply("✅ Admin-Modus beendet.");
-        }
-
-        // check perms by telegramId
-        const isAdmin = adminUsers.some(a => String(a.telegramId) === String(uid));
+        const msg = String(ctx.message.text || "").trim();
+        const isAdmin = admins.some(a => String(a.telegramId) === String(uid));
         const isCustomer = accounts.some(a => a.role === "customer" && a.assignedCustomer === customer && String(a.telegramId) === String(uid));
+        if (!isAdmin && !isCustomer) return ctx.reply("🚫 Du bist kein berechtigter Benutzer.");
 
-        if (!isAdmin && !isCustomer) {
-          return ctx.reply("🚫 Du bist kein berechtigter Benutzer.");
+        // check if message appears in info -> simple contains match
+        const infoText = loadCustomerInfo(customer) || "";
+        if (infoText && infoText.toLowerCase().includes(msg.toLowerCase())) {
+          return ctx.reply(infoText);
         }
 
-        // Bot answers: use customer info first
-        const info = loadCustomerInfo(customer) || "";
-        // If simple direct match in info -> respond; else fallback to OpenAI
-        if (info && info.toLowerCase().includes(msg.toLowerCase())) {
-          return ctx.reply(info);
-        }
-
-        // fallback to OpenAI if configured
+        // else fallback to OpenAI if configured
         if (process.env.OPENAI_API_KEY) {
           try {
-            const prompt = `Du bist der KI-Assistent von ${customer}. Antworte nur basierend auf folgender Info, wenn möglich, ansonsten antworte kurz und höflich:\n\n${info}\n\nFrage: ${msg}`;
-            const g = await openai.chat.completions.create({
+            const prompt = `Du bist der Assistent von ${customer}. Nutze vorrangig folgende Informationen: ${infoText}\n\nFrage: ${msg}`;
+            const resp = await openai.chat.completions.create({
               model: "gpt-4o-mini",
               messages: [{ role: "user", content: prompt }],
               max_tokens: 250,
               temperature: 0
             });
-            const answer = g.choices?.[0]?.message?.content?.trim() || "Das weiß ich nicht.";
+            const answer = resp.choices?.[0]?.message?.content?.trim() || "Das weiß ich nicht.";
             return ctx.reply(answer);
           } catch (e) {
             console.error("OpenAI error:", e);
             return ctx.reply("⚠️ Fehler: konnte nicht antworten.");
           }
         } else {
-          return ctx.reply("ℹ️ Keine OpenAI-API konfiguriert und Info nicht gefunden.");
+          return ctx.reply("ℹ️ Keine passende Info und OpenAI nicht konfiguriert.");
         }
       } catch (err) {
-        console.error("Bot text handler error:", err);
-        try { ctx.reply("⚠️ Fehler beim Verarbeiten."); } catch(e) {}
+        console.error("Bot handler error:", err);
+        try { ctx.reply("⚠️ Fehler beim Verarbeiten."); } catch (e) {}
       }
     });
 
-    // webhook support (Render) or fallback to polling
+    // webhook vs polling
     const RENDER_URL = process.env.RENDER_URL || process.env.PRIMARY_URL || null;
     try {
       if (RENDER_URL) {
@@ -235,35 +274,35 @@ async function initCustomerBot(customer /* customer name as key */){
         await bot.launch({ dropPendingUpdates: true });
       }
     } catch (e) {
-      console.warn("Webhook failed; trying polling:", e);
+      console.warn("Webhook failed, fallback to polling:", e);
       try { await bot.launch({ dropPendingUpdates: true }); } catch (e2) { console.error("Polling start failed:", e2); }
     }
 
     bots[customer] = bot;
-    console.log(`Init bot for ${customer} done`);
+    console.log(`Initialized bot for ${customer}`);
   } catch (e) {
     console.error("initCustomerBot error:", e);
   }
 }
 
-// initialize existing customers' bots
+// initialize existing customers at startup
 listCustomers().forEach(c => {
-  try { ensureCustomerDir(c); initCustomerBot(c).catch(err => console.error("init error", c, err)); } catch(e) {}
+  try { initCustomerBot(c).catch(() => {}); } catch (e) { console.error("init error", c, e); }
 });
 
 // ---------------------------
 // Cookie helpers
 // ---------------------------
-function parseCookies(req){
+function parseCookies(req) {
   const header = req.headers?.cookie || "";
   const obj = {};
-  header.split(";").map(s=>s.trim()).filter(Boolean).forEach(p=>{
+  header.split(";").map(s => s.trim()).filter(Boolean).forEach(p => {
     const idx = p.indexOf("=");
-    if (idx > -1) obj[p.slice(0, idx)] = decodeURIComponent(p.slice(idx+1));
+    if (idx > -1) obj[p.slice(0, idx)] = decodeURIComponent(p.slice(idx + 1));
   });
   return obj;
 }
-function setCookie(res, name, value, opts = {}){
+function setCookie(res, name, value, opts = {}) {
   let cookie = `${name}=${encodeURIComponent(value)}`;
   if (opts.maxAge) cookie += `; Max-Age=${opts.maxAge}`;
   if (opts.httpOnly) cookie += `; HttpOnly`;
@@ -274,7 +313,7 @@ function setCookie(res, name, value, opts = {}){
 }
 
 // ---------------------------
-// Auth middleware (deviceToken per device)
+// Auth middleware (deviceToken stored per device)
 // ---------------------------
 function requireAuth(req, res, next) {
   const cookies = parseCookies(req);
@@ -287,7 +326,7 @@ function requireAuth(req, res, next) {
   next();
 }
 
-// Admin-only (requires authenticated admin account OR invite-pin/native admin fallback)
+// requireAdmin: account must be admin or superadmin
 function requireAdmin(req, res, next) {
   if (!req.user) return res.redirect("/register");
   if (req.user.role === "admin" || req.user.role === "superadmin") return next();
@@ -296,211 +335,250 @@ function requireAdmin(req, res, next) {
 
 // ---------------------------
 // Routes: Register / Login / Logout
-// - We support invite-links: /register?invite=TOKEN
+// - /register supports invite tokens as ?invite=TOKEN
+// - first registered user becomes superadmin
 // ---------------------------
+
 app.get("/register", (req, res) => {
-  const invite = req.query.invite || "";
+  const invite = (req.query.invite || "").trim();
+  // simple Tailwind UI + eye toggle JS
   res.send(`
-    <h1>Registrierung</h1>
-    <form method="post" action="/register${invite?('?invite='+invite):''}">
-      <input name="username" placeholder="Benutzername (einzigartig)" required /><br/>
-      <input name="password" type="password" placeholder="Passwort" required />
-      <span style="cursor:pointer" onclick="(function(i){const p=document.querySelector('input[name=password]'); p.type = p.type==='password'?'text':'password'} )()">👁️</span>
-      <br/>
-      <input name="firstName" placeholder="Vorname" required /><br/>
-      <input name="lastName" placeholder="Nachname" required /><br/>
-      <input name="phone" placeholder="Handynummer" required /><br/>
-      <input name="company" placeholder="Firma (optional)" /><br/>
-      <button>Registrieren</button>
-    </form>
-    <p><a href="/login">Login</a></p>
+  <!doctype html>
+  <html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <title>Registrierung</title>
+  </head>
+  <body class="p-6 bg-gray-50">
+    <div class="max-w-xl mx-auto bg-white p-6 rounded shadow">
+      <h1 class="text-xl font-bold mb-4">Registrierung</h1>
+      <form method="POST" action="/register${invite?('?invite='+invite):''}" class="space-y-3">
+        <div><input name="username" placeholder="Benutzername" required class="w-full border p-2 rounded" /></div>
+        <div class="relative">
+          <input id="pw" name="password" type="password" placeholder="Passwort" required class="w-full border p-2 rounded pr-10" />
+          <button type="button" onclick="(function(){const i=document.getElementById('pw'); i.type = i.type==='password'?'text':'password'})()" class="absolute right-2 top-2 text-gray-600">👁️</button>
+        </div>
+        <div><input name="firstName" placeholder="Vorname" required class="w-full border p-2 rounded" /></div>
+        <div><input name="lastName" placeholder="Nachname" required class="w-full border p-2 rounded" /></div>
+        <div><input name="email" placeholder="E-Mail (oder leer)" class="w-full border p-2 rounded" /></div>
+        <div><input name="phone" placeholder="Telefon (optional, wird normalisiert)" class="w-full border p-2 rounded" /></div>
+        <div><input name="company" placeholder="Firma (optional)" class="w-full border p-2 rounded" /></div>
+        <div><button class="bg-blue-600 text-white px-4 py-2 rounded">Registrieren</button></div>
+      </form>
+      <p class="mt-4 text-sm">Hast du bereits ein Konto? <a href="/login" class="text-blue-600">Login</a></p>
+    </div>
+  </body>
+  </html>
   `);
 });
 
 app.post("/register", (req, res) => {
-  const { username, password, firstName, lastName, phone, company } = req.body;
-  if (!username || !password || !firstName || !lastName || !phone) return res.send("Bitte alle Pflichtfelder ausfüllen.");
-
+  const { username, password, firstName, lastName, email, phone, company } = req.body;
+  if (!username || !password || !firstName || !lastName) return res.send("Bitte Pflichtfelder ausfüllen.");
   const accounts = loadAccounts();
   if (accounts.find(a => a.username === username)) return res.send("Benutzername bereits vergeben.");
 
   const inviteToken = (req.query.invite || "").trim();
   const adminData = loadAdminData();
-
   const { salt, hash } = hashPassword(password);
+  const deviceToken = crypto.randomBytes(32).toString("hex");
   const newId = crypto.randomBytes(8).toString("hex");
-  const deviceToken = crypto.randomBytes(24).toString("hex");
 
-  // default: pending
-  let finalRole = "pending";
+  let role = "pending";
   let assignedCustomer = null;
-
-  // if invite token valid -> allow direct creation with role
   if (inviteToken && adminData.invites && Array.isArray(adminData.invites)) {
-    const invIdx = adminData.invites.findIndex(i => i.token === inviteToken);
-    if (invIdx > -1) {
-      const inv = adminData.invites[invIdx];
-      finalRole = inv.role || "customer";
+    const idx = adminData.invites.findIndex(i => i.token === inviteToken);
+    if (idx > -1) {
+      const inv = adminData.invites[idx];
+      role = inv.role || "customer";
       assignedCustomer = inv.customer || null;
-      // consume invite (one-time)
-      adminData.invites.splice(invIdx, 1);
+      // consume invite
+      adminData.invites.splice(idx, 1);
       saveAdminData(adminData);
+    }
+  } else {
+    // if this is the first ever account, make superadmin
+    if (accounts.length === 0) {
+      role = "superadmin";
     }
   }
 
-  const accObj = {
+  const acc = {
     id: newId,
     username,
-    salt,
-    hash,
-    firstName,
-    lastName,
-    phone,
-    company: company || "",
-    role: finalRole,
-    assignedCustomer: assignedCustomer,
+    salt, hash,
+    firstName, lastName,
+    email: (email || "").trim() || null,
+    phoneNormalized: normalizePhone(phone || ""),
+    company: (company || "").trim() || "",
+    role,
+    assignedCustomer,
     deviceTokens: [deviceToken],
     telegramId: null
   };
-  accounts.push(accObj);
+  accounts.push(acc);
   saveAccounts(accounts);
 
-  // if role pending and not invited -> add to admin pendingRequests for review (include ip)
-  if (finalRole === "pending") {
-    const ip = getClientIp(req);
+  if (role === "pending") {
+    // add to admin pending
     adminData.pendingRequests = adminData.pendingRequests || [];
     adminData.pendingRequests.push({
       id: crypto.randomBytes(6).toString("hex"),
-      username, firstName, lastName, phone, company, ip, ts: Date.now()
+      username, firstName, lastName, email: acc.email, phone: acc.phoneNormalized, company: acc.company,
+      ip: getClientIp(req), ts: Date.now()
     });
     saveAdminData(adminData);
-    return res.send("✅ Registrierungsanfrage gesendet. Admin wird prüfen.");
+    return res.send("Registrierungsanfrage gesendet. Admin wird prüfen.");
   }
 
-  // set device cookie & redirect
+  // set cookie
   setCookie(res, "deviceToken", deviceToken, { httpOnly: true, maxAge: 60 * 60 * 24 * 30, path: "/" });
 
-  // if assignedCustomer exists and a bot token exists -> try start bot
+  // If assignedCustomer exists, ensure folder and try to init bot
   if (assignedCustomer) {
-    try { initCustomerBot(assignedCustomer).catch(()=>{}); } catch(e){ console.error("init after invite:", e); }
+    ensureCustomerDir(assignedCustomer);
+    initCustomerBot(assignedCustomer).catch(() => {});
   }
 
-  res.send(`Account erstellt mit Rolle ${finalRole}. <a href="/dashboard">Zum Dashboard</a>`);
+  res.send(`Account erstellt als ${role}. <a href="/dashboard">Zum Dashboard</a>`);
 });
 
-// Login (device-token created per login)
-app.get("/login", (req,res) => {
+// Login
+app.get("/login", (req, res) => {
   res.send(`
-    <h1>Login</h1>
-    <form method="post" action="/login">
-      <input name="username" placeholder="Benutzername" required /><br/>
-      <input name="password" type="password" placeholder="Passwort" required /><br/>
-      <button>Login</button>
+  <!doctype html><html><head><script src="https://cdn.tailwindcss.com"></script></head><body class="p-6">
+  <div class="max-w-md mx-auto bg-white p-6 rounded shadow">
+    <h1 class="text-xl font-bold mb-4">Login</h1>
+    <form method="POST" action="/login" class="space-y-3">
+      <input name="username" placeholder="Benutzername" required class="w-full border p-2 rounded" />
+      <div class="relative">
+        <input id="pw2" name="password" type="password" placeholder="Passwort" required class="w-full border p-2 rounded pr-10" />
+        <button type="button" onclick="(function(){const i=document.getElementById('pw2'); i.type = i.type==='password'?'text':'password'})()" class="absolute right-2 top-2 text-gray-600">👁️</button>
+      </div>
+      <button class="bg-blue-600 text-white px-4 py-2 rounded">Login</button>
     </form>
+  </div></body></html>
   `);
 });
-app.post("/login", (req,res) => {
+app.post("/login", (req, res) => {
   const { username, password } = req.body;
   const accounts = loadAccounts();
   const acc = accounts.find(a => a.username === username);
   if (!acc) return res.send("Benutzer nicht gefunden.");
   if (!verifyPassword(password, acc.salt, acc.hash)) return res.send("Ungültiges Passwort.");
-
   const deviceToken = crypto.randomBytes(32).toString("hex");
   acc.deviceTokens = acc.deviceTokens || [];
   acc.deviceTokens.push(deviceToken);
   saveAccounts(accounts);
-
   setCookie(res, "deviceToken", deviceToken, { httpOnly: true, maxAge: 60 * 60 * 24 * 30, path: "/" });
-
   if (acc.role === "pending") return res.send("Account noch nicht freigeschaltet.");
   return res.redirect("/dashboard");
 });
 
-app.get("/logout", (req,res) => {
+// Logout
+app.get("/logout", (req, res) => {
   setCookie(res, "deviceToken", "", { maxAge: 0, path: "/" });
   res.send("Abgemeldet. <a href='/'>Start</a>");
 });
 
 // ---------------------------
-// Dashboard & Admin UI
+// Dashboard (user & admin)
 // ---------------------------
-app.get("/dashboard", requireAuth, (req,res) => {
+app.get("/dashboard", requireAuth, (req, res) => {
   const accounts = loadAccounts();
-  const pending = loadAdminData().pendingRequests || [];
-  const botsList = listCustomers(); // customer names correspond to bots/customers
-  let html = `<h1>Dashboard</h1><p>Hallo ${req.user.firstName} ${req.user.lastName} [${req.user.role}]</p>`;
+  const adminData = loadAdminData();
+  const customers = listCustomers();
+  let html = `
+  <!doctype html><html><head><script src="https://cdn.tailwindcss.com"></script></head><body class="p-6 bg-gray-50">
+  <div class="max-w-5xl mx-auto">
+    <h1 class="text-2xl font-bold mb-4">Dashboard</h1>
+    <p>Hallo ${req.user.firstName} ${req.user.lastName} — <strong>${req.user.role}</strong></p>
+    <hr class="my-4" />
+  `;
 
-  // password change form (show/hide eye)
-  html += `<h3>Eigenes Passwort ändern</h3>
-    <form method="POST" action="/changepw">
-      <input name="current" placeholder="Aktuelles Passwort" type="password" required/> <span style="cursor:pointer" onclick="(function(){const i=document.querySelector('input[name=current]'); i.type=i.type==='password'?'text':'password'})()">👁️</span><br/>
-      <input name="newpw" placeholder="Neues Passwort" type="password" required/> <span style="cursor:pointer" onclick="(function(){const i=document.querySelector('input[name=newpw]'); i.type=i.type==='password'?'text':'password'})()">👁️</span><br/>
-      <button>Ändern</button>
-    </form>`;
+  // Own password change form
+  html += `
+    <div class="mb-6">
+      <h2 class="text-lg font-semibold">Eigenes Passwort ändern</h2>
+      <form method="POST" action="/changepw" class="space-y-2">
+        <div class="relative"><input name="current" placeholder="Aktuelles Passwort" type="password" required class="border p-2 rounded w-full"/><button type="button" onclick="(function(){const i=document.querySelector('input[name=current]'); i.type=i.type==='password'?'text':'password'})()" class="ml-2">👁️</button></div>
+        <div class="relative"><input name="newpw" placeholder="Neues Passwort" type="password" required class="border p-2 rounded w-full"/><button type="button" onclick="(function(){const i=document.querySelector('input[name=newpw]'); i.type=i.type==='password'?'text':'password'})()" class="ml-2">👁️</button></div>
+        <button class="bg-green-600 text-white px-3 py-1 rounded">Ändern</button>
+      </form>
+    </div>
+  `;
 
+  // Customer view
   if (req.user.role === "customer") {
-    html += `<h2>Dein Kundenbereich: ${req.user.assignedCustomer || "n/a"}</h2>`;
-    html += `<p>Du kannst die Info deines Kunden bearbeiten (falls zugewiesen).</p>`;
+    html += `<h2 class="text-lg font-semibold">Dein Kundenbereich: ${req.user.assignedCustomer || "keine Zuweisung"}</h2>`;
     if (req.user.assignedCustomer) {
       const info = loadCustomerInfo(req.user.assignedCustomer) || "";
-      html += `<form method="POST" action="/customer/${req.user.assignedCustomer}/save">
-        <textarea name="data" rows="12" cols="60">${info}</textarea><br/>
-        <button>Speichern</button>
-      </form>`;
+      html += `<form method="POST" action="/customer/${req.user.assignedCustomer}/save"><textarea name="data" rows="10" cols="80" class="w-full border p-2 rounded">${info}</textarea><br/><button class="mt-2 bg-blue-600 text-white px-3 py-1 rounded">Speichern</button></form>`;
+    } else {
+      html += `<p>Dir ist kein Kunde zugewiesen.</p>`;
     }
-    res.send(html); return;
+    html += `<p class="mt-4"><a href="/logout" class="text-blue-600">Logout</a></p></div></body></html>`;
+    return res.send(html);
   }
 
-  // Admin / Superadmin UI
-  const adminData = loadAdminData();
-  html += `<h2>Pending Registrations</h2>`;
-  (adminData.pendingRequests || []).forEach((p, idx) => {
-    html += `<p>${p.firstName} ${p.lastName} — ${p.company || "-"} — ${p.phone} — IP: ${p.ip} 
-      <a href="/admin/approve/${idx}">✅ Approve</a> 
-      <a href="/admin/reject/${idx}">❌ Reject</a></p>`;
-  });
+  // Admin / Superadmin: pending requests
+  if (req.user.role === "admin" || req.user.role === "superadmin") {
+    html += `<div class="mb-6"><h2 class="text-lg font-semibold">Pending Registrations</h2>`;
+    (adminData.pendingRequests || []).forEach((p, idx) => {
+      html += `<div class="border p-2 my-2"><strong>${p.firstName} ${p.lastName}</strong> — ${p.company || "-"} — ${p.email || "-"} — ${p.phone || "-"} — IP: ${p.ip}
+        <br/><a href="/admin/approve/${idx}" class="text-green-600 mr-2">✅ Approve</a><a href="/admin/reject/${idx}" class="text-red-600">❌ Reject</a></div>`;
+    });
+    html += `</div>`;
+  }
 
-  html += `<h2>Accounts</h2><ul>`;
-  accounts.forEach(a => {
-    html += `<li>${a.username} — ${a.role} ${a.assignedCustomer?`(customer:${a.assignedCustomer})`:''} 
-      ${req.user.role === "superadmin" ? `<form style="display:inline" method="POST" action="/admin/resetpw"><input type="hidden" name="username" value="${a.username}"/><button>Reset PW (Superadmin)</button></form>` : '' }
-    </li>`;
+  // Accounts list + superadmin reset button
+  html += `<div class="mb-6"><h2 class="text-lg font-semibold">Accounts</h2><ul class="list-disc ml-6">`;
+  loadAccounts().forEach(a => {
+    html += `<li>${a.username} — ${a.role} ${a.assignedCustomer?`(customer:${a.assignedCustomer})`:''} `;
+    if (req.user.role === "superadmin") {
+      html += `<form style="display:inline" method="POST" action="/admin/resetpw"><input type="hidden" name="username" value="${a.username}"/><button class="ml-2 bg-yellow-500 px-2 py-1 rounded">Reset PW</button></form>`;
+    }
+    html += `</li>`;
   });
-  html += `</ul>`;
+  html += `</ul></div>`;
 
-  // Bot / Customer list + edit links + invite link generation
-  html += `<h2>Kunden / Bots</h2>`;
-  botsList.forEach(b => {
-    const info = loadCustomerInfo(b) || "";
-    html += `<div style="border:1px solid #ccc;padding:8px;margin:6px;">
-      <strong>${b}</strong> — Status: ${bots[b] ? "running" : (pausedBots[b] ? "paused" : "stopped")} 
-      <br/> <a href="/admin/view/${b}">Bearbeiten</a>
-    </div>`;
+  // Customers/Bots list
+  html += `<div class="mb-6"><h2 class="text-lg font-semibold">Kunden / Bots</h2>`;
+  customers.forEach(c => {
+    html += `<div class="border p-3 mb-2"><strong>${c}</strong> — Status: ${bots[c] ? "running" : (pausedBots[c] ? "paused" : "stopped")} 
+      <br/><a href="/admin/view/${c}" class="text-blue-600">Bearbeiten</a></div>`;
   });
+  html += `</div>`;
 
-  // invite generator (admins can create invite links to send to new customers)
-  html += `<h2>Invite-Link erzeugen</h2>
-    <form method="POST" action="/admin/invite">
-      Rolle: <select name="role"><option value="customer">Kunde</option><option value="admin">Admin</option></select>
-      Optional Kunde (wenn Rolle Kunde): <input name="customer" placeholder="customer-name (z.B. kunde-xyz)"/>
-      <button>Invite erstellen</button>
+  // Invite generator & list
+  html += `<div class="mb-6"><h2 class="text-lg font-semibold">Invite-Link erzeugen</h2>
+    <form method="POST" action="/admin/invite" class="flex gap-2 items-center">
+      <select name="role" class="border p-2 rounded"><option value="customer">Kunde</option><option value="admin">Admin</option></select>
+      <input name="customer" placeholder="customer-name (optional)" class="border p-2 rounded" />
+      <button class="bg-indigo-600 text-white px-3 py-1 rounded">Erstellen</button>
     </form>
-    <p>Erstellte Invites:</p>
-    <ul>`;
+    <div class="mt-3"><h4 class="font-medium">Erstellte Invites</h4><ul>`;
   (adminData.invites || []).forEach(inv => {
     const base = process.env.RENDER_URL || `http://localhost:${process.env.PORT || 10000}`;
-    html += `<li>Role:${inv.role} ${inv.customer?` customer:${inv.customer}`:''} — <input style="width:400px" value="${base}/register?invite=${inv.token}" readonly /> <button onclick="navigator.clipboard.writeText('${base}/register?invite=${inv.token}')">Kopieren</button></li>`;
+    const link = `${base}/register?invite=${inv.token}`;
+    html += `<li class="my-2">Role:${inv.role} ${inv.customer?` customer:${inv.customer}`:''}
+      <input class="border p-1 rounded w-96" value="${link}" readonly />
+      <button onclick="navigator.clipboard.writeText('${link}')" class="ml-2 bg-gray-200 px-2 rounded">Kopieren</button>
+      </li>`;
   });
-  html += `</ul>`;
+  html += `</ul></div></div>`;
 
-  html += `<p><a href="/logout">Logout</a></p>`;
+  html += `<p class="mt-4"><a href="/logout" class="text-blue-600">Logout</a></p></div></body></html>`;
   res.send(html);
 });
 
-// change own password
-app.post("/changepw", requireAuth, (req,res) => {
+// ---------------------------
+// Change own password
+app.post("/changepw", requireAuth, (req, res) => {
   const { current, newpw } = req.body;
+  if (!current || !newpw) return res.send("Angaben fehlen.");
   const accounts = loadAccounts();
   const acc = accounts.find(a => a.id === req.user.id);
   if (!acc) return res.send("Account nicht gefunden.");
@@ -511,8 +589,9 @@ app.post("/changepw", requireAuth, (req,res) => {
   res.send("Passwort geändert. <a href='/dashboard'>Zurück</a>");
 });
 
-// Superadmin reset password (resets target to random and returns it)
-app.post("/admin/resetpw", requireAuth, (req,res) => {
+// ---------------------------
+// Superadmin: reset pw for any user
+app.post("/admin/resetpw", requireAuth, (req, res) => {
   if (req.user.role !== "superadmin") return res.send("Nur Superadmin.");
   const { username } = req.body;
   const accounts = loadAccounts();
@@ -522,38 +601,33 @@ app.post("/admin/resetpw", requireAuth, (req,res) => {
   const { salt, hash } = hashPassword(newpw);
   acc.salt = salt; acc.hash = hash;
   saveAccounts(accounts);
-  res.send(`Passwort zurückgesetzt. Neues Passwort: <b>${newpw}</b> (sichere es sofort). <a href="/dashboard">Zurück</a>`);
+  res.send(`Passwort zurückgesetzt. Neues Passwort: <b>${newpw}</b>. (Sichere es sofort). <a href="/dashboard">Zurück</a>`);
 });
 
-// admin invite creation
-app.post("/admin/invite", requireAuth, (req,res) => {
+// ---------------------------
+// Invite creation
+app.post("/admin/invite", requireAuth, (req, res) => {
   if (!(req.user.role === "admin" || req.user.role === "superadmin")) return res.send("Nur Admins.");
   const { role, customer } = req.body;
   const adminData = loadAdminData();
   adminData.invites = adminData.invites || [];
-  const token = crypto.randomBytes(10).toString("hex");
+  const token = crypto.randomBytes(12).toString("hex");
   adminData.invites.push({ token, role: role || "customer", customer: (customer || null), created: Date.now() });
   saveAdminData(adminData);
   res.redirect("/dashboard");
 });
 
 // ---------------------------
-// Admin approve/reject flows (basic indices used like Code1)
-app.get("/admin/approve/:idx", requireAuth, (req,res) => {
+// Admin Approve / Reject pending
+app.get("/admin/approve/:idx", requireAuth, (req, res) => {
   if (!(req.user.role === "admin" || req.user.role === "superadmin")) return res.send("Nur Admins.");
   const idx = parseInt(req.params.idx);
   const adminData = loadAdminData();
   const reqObj = adminData.pendingRequests?.[idx];
   if (!reqObj) return res.send("Nicht gefunden.");
-  // show simple approve form
-  res.send(`<h2>Approve ${reqObj.username}</h2>
-    <form method="post" action="/admin/approve/${idx}">
-      Rolle: <select name="role"><option value="customer">customer</option><option value="admin">admin</option></select>
-      Kunde-Name (falls customer): <input name="customerName" value="${reqObj.company || ''}" />
-      <button>Approve</button>
-    </form>`);
+  res.send(`<form method="post" action="/admin/approve/${idx}">Rolle: <select name="role"><option value="customer">customer</option><option value="admin">admin</option></select> Kunde-Name: <input name="customerName" value="${reqObj.company || ''}" /> <button>Bestätigen</button></form>`);
 });
-app.post("/admin/approve/:idx", requireAuth, (req,res) => {
+app.post("/admin/approve/:idx", requireAuth, (req, res) => {
   if (!(req.user.role === "admin" || req.user.role === "superadmin")) return res.send("Nur Admins.");
   const idx = parseInt(req.params.idx);
   const adminData = loadAdminData();
@@ -571,70 +645,63 @@ app.post("/admin/approve/:idx", requireAuth, (req,res) => {
     acc.role = "customer";
     acc.assignedCustomer = cname;
     addCustomerIP(cname, reqObj.ip, `${reqObj.firstName} ${reqObj.lastName}`);
-    initCustomerBot(cname).catch(()=>{});
+    initCustomerBot(cname).catch(() => {});
   }
   saveAccounts(accounts);
-  // remove pending
-  adminData.pendingRequests.splice(idx,1);
+  adminData.pendingRequests.splice(idx, 1);
   saveAdminData(adminData);
   res.send("✅ Genehmigt. <a href='/dashboard'>Zurück</a>");
 });
-app.get("/admin/reject/:idx", requireAuth, (req,res) => {
+app.get("/admin/reject/:idx", requireAuth, (req, res) => {
   if (!(req.user.role === "admin" || req.user.role === "superadmin")) return res.send("Nur Admins.");
   const idx = parseInt(req.params.idx);
   const adminData = loadAdminData();
   if (!adminData.pendingRequests?.[idx]) return res.send("Nicht gefunden.");
-  adminData.pendingRequests.splice(idx,1);
+  adminData.pendingRequests.splice(idx, 1);
   saveAdminData(adminData);
   res.send("❌ Abgelehnt. <a href='/dashboard'>Zurück</a>");
 });
 
 // ---------------------------
-// Admin: view/edit customer, token, pause/resume like Code1
-app.get("/admin/view/:customer", requireAuth, (req,res) => {
+// Admin: view / edit customer, token, pause/resume
+app.get("/admin/view/:customer", requireAuth, (req, res) => {
   if (!(req.user.role === "admin" || req.user.role === "superadmin")) return res.send("Nur Admins.");
   const customer = req.params.customer;
   if (!fs.existsSync(path.join(CUSTOMERS_DIR, customer))) return res.send("Kunde nicht vorhanden.");
   const info = loadCustomerInfo(customer) || "";
-  const ips = JSON.parse(fs.readFileSync(path.join(CUSTOMERS_DIR, customer, "ips.json"), "utf8")).ips || [];
+  const ips = getCustomerIPs(customer) || [];
   const paused = !!pausedBots[customer];
   res.send(`
     <h1>Bearbeite ${customer}</h1>
-    <form method="post" action="/admin/save/${customer}">
+    <form method="POST" action="/admin/save/${customer}">
       <textarea name="data" rows="20" cols="80">${info}</textarea><br/>
       <button>Speichern</button>
     </form>
     <h3>Zugelassene IPs</h3>
     <ul>${ips.map(i=>`<li>${i.ip} ${i.label?`(${i.label})`:''} - <a href="/admin/remove-customer-ip/${customer}/${i.ip}">entfernen</a></li>`).join("")}</ul>
-    <form method="post" action="/admin/add-customer-ip/${customer}">
-      <input name="ip" placeholder="IP-Adresse" required /> <input name="label" placeholder="Label" />
-      <button>Hinzufügen</button>
-    </form>
-    <h3>Bot Steuerung</h3>
+    <form method="POST" action="/admin/add-customer-ip/${customer}"><input name="ip" placeholder="IP" required /> <input name="label" placeholder="Label" /><button>Hinzufügen</button></form>
+    <h3>Bot</h3>
     <p>Status: ${paused? "paused":"running/stopped"}</p>
-    <form method="post" action="/admin/token/${customer}">
-      Neues Token: <input name="newToken" placeholder="Neues Bot Token" />
-      <button>Setzen & Neustart</button>
-    </form>
-    <a href="/admin">Zurück</a>
+    <form method="POST" action="/admin/token/${customer}">Neues Token: <input name="newToken" placeholder="Neues Bot Token" /> <button>Setzen & Neustart</button></form>
+    <p><a href="/admin">Zurück</a></p>
   `);
 });
-app.post("/admin/save/:customer", requireAuth, (req,res) => {
+app.post("/admin/save/:customer", requireAuth, (req, res) => {
   if (!(req.user.role === "admin" || req.user.role === "superadmin")) return res.send("Nur Admins.");
   saveCustomerInfo(req.params.customer, req.body.data || "");
   res.redirect(`/admin/view/${req.params.customer}`);
 });
-app.post("/admin/add-customer-ip/:customer", requireAuth, (req,res) => {
+app.post("/admin/add-customer-ip/:customer", requireAuth, (req, res) => {
   if (!(req.user.role === "admin" || req.user.role === "superadmin")) return res.send("Nur Admins.");
   addCustomerIP(req.params.customer, req.body.ip.trim(), req.body.label || "");
   res.redirect(`/admin/view/${req.params.customer}`);
 });
-app.get("/admin/remove-customer-ip/:customer/:ip", requireAuth, (req,res) => {
+app.get("/admin/remove-customer-ip/:customer/:ip", requireAuth, (req, res) => {
   if (!(req.user.role === "admin" || req.user.role === "superadmin")) return res.send("Nur Admins.");
   removeCustomerIP(req.params.customer, req.params.ip);
   res.redirect(`/admin/view/${req.params.customer}`);
 });
-app.post("/admin/token/:customer", requireAuth, (req,res) => {
+app.post("/admin/token/:customer", requireAuth, (req, res) => {
   if (!(req.user.role === "admin" || req.user.role === "superadmin")) return res.send("Nur Admins.");
   const t = req.body.newToken || "";
   if (t) saveBotToken(req.params.customer, t);
@@ -642,14 +709,14 @@ app.post("/admin/token/:customer", requireAuth, (req,res) => {
   initCustomerBot(req.params.customer).catch(()=>{});
   res.redirect(`/admin/view/${req.params.customer}`);
 });
-app.get("/admin/bot/pause/:customer", requireAuth, (req,res) => {
+app.get("/admin/bot/pause/:customer", requireAuth, (req, res) => {
   if (!(req.user.role === "admin" || req.user.role === "superadmin")) return res.send("Nur Admins.");
   pausedBots[req.params.customer] = true;
   savePausedBots();
   stopCustomerBot(req.params.customer).catch(()=>{});
   res.redirect("/admin");
 });
-app.get("/admin/bot/resume/:customer", requireAuth, (req,res) => {
+app.get("/admin/bot/resume/:customer", requireAuth, (req, res) => {
   if (!(req.user.role === "admin" || req.user.role === "superadmin")) return res.send("Nur Admins.");
   delete pausedBots[req.params.customer];
   savePausedBots();
@@ -658,22 +725,15 @@ app.get("/admin/bot/resume/:customer", requireAuth, (req,res) => {
 });
 
 // ---------------------------
-// Customer-facing (account) view similar to Code1
+// Customer-facing view (account)
 app.get("/customer/:customer", requireAuth, (req,res) => {
   const acc = req.user;
   if (acc.role === "customer" && acc.assignedCustomer === req.params.customer) {
     const info = loadCustomerInfo(req.params.customer) || "";
-    res.send(`
-      <h1>Customer Dashboard ${req.params.customer}</h1>
-      <form method="post" action="/customer/${req.params.customer}/save">
-        <textarea name="data" rows="12" cols="80">${info}</textarea><br/>
-        <button>Speichern</button>
-      </form>
-      <p><a href="/dashboard">Zurück</a></p>
-    `);
-  } else {
-    res.status(403).send("Zugriff verweigert.");
-  }
+    res.send(`<h1>Customer Dashboard ${req.params.customer}</h1>
+      <form method="post" action="/customer/${req.params.customer}/save"><textarea name="data" rows="12" cols="80">${info}</textarea><br/><button>Speichern</button></form>
+      <p><a href="/dashboard">Zurück</a></p>`);
+  } else res.status(403).send("Zugriff verweigert.");
 });
 app.post("/customer/:customer/save", requireAuth, (req,res) => {
   const acc = req.user;
@@ -684,7 +744,7 @@ app.post("/customer/:customer/save", requireAuth, (req,res) => {
 });
 
 // ---------------------------
-// Webhook endpoint for telegram (used when webhook set)
+// Webhook endpoint for Telegram
 app.post("/bot/:customerId", express.json(), async (req, res) => {
   const { customerId } = req.params;
   const bot = bots[customerId];
@@ -694,11 +754,11 @@ app.post("/bot/:customerId", express.json(), async (req, res) => {
 app.get("/bot/:customerId", (req,res) => res.send(`Webhook test for ${req.params.customerId}`));
 
 // ---------------------------
-// Root & start
+// Root / start
 app.get("/", (req,res) => {
-  res.send(`<h1>Multi-Kunden-Bot Platform</h1>
-    <p><a href="/register">Registrieren</a> | <a href="/login">Login</a> | <a href="/dashboard">Dashboard</a></p>`);
+  res.send(`<h1>Multi-Kunden-Bot Platform</h1><p><a href="/register">Registrieren</a> | <a href="/login">Login</a> | <a href="/dashboard">Dashboard</a></p>`);
 });
 
+// Start server
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`Server läuft auf Port ${PORT}`));
