@@ -108,13 +108,14 @@ async function initBot(botToken, botId){
     const bot = new Telegraf(botToken);
     const accounts = loadAccounts();
     const superadmin = accounts.find(a=>a.role==="superadmin");
-    const admins = accounts.filter(a=>a.role==="admin");
+    const admins = accounts.filter(a=>a.role==="admin" || a.role==="superadmin");
     const customersWithBot = accounts.filter(a=>a.assignedBots?.includes(botId));
     const infoFile = ensureInfoFile(botId);
 
     bot.start(ctx=>{
         const uid=ctx.from.id;
-        if([superadmin,...admins].some(a=>a.telegramId===uid)) return ctx.reply("Admin-Modus aktiviert.");
+        const isAdmin=[superadmin,...admins].some(a=>a.telegramId===uid);
+        if(isAdmin) return ctx.reply("Admin-Modus aktiviert.");
         if(customersWithBot.some(c=>c.telegramId===uid)) return ctx.reply("Bot-Modus aktiviert.");
         ctx.reply("🚫 Du bist kein berechtigter Benutzer.");
     });
@@ -125,10 +126,9 @@ async function initBot(botToken, botId){
         const isCustomer=customersWithBot.some(c=>c.telegramId===uid);
         const msg = ctx.message.text.trim();
 
-        if(!isAdmin && !isCustomer){
-            // Jeder kann schreiben, aber nur Admin/Customer bekommt Antwort
-            ctx.reply("🚫 Du hast keine Berechtigungen für Befehle.");
-            return;
+        // Jeder kann Nachrichten senden, aber nur Admins können Befehle
+        if(msg.startsWith("/")){
+            if(!isAdmin) return ctx.reply("🚫 Nur Admins können Befehle nutzen.");
         }
 
         try{
@@ -146,11 +146,7 @@ async function initBot(botToken, botId){
         }catch(e){console.error(e); ctx.reply("⚠️ Fehler beim Beantworten.");}
     });
 
-    try {
-        await bot.launch({ dropPendingUpdates: true });
-    } catch (err) {
-        console.error(err);
-    }
+    try{ await bot.launch({dropPendingUpdates:true}); } catch(err){ console.error(err); }
     botsInstances[botId] = bot;
 }
 
@@ -158,8 +154,8 @@ async function initBot(botToken, botId){
 // Routes (Register/Login/Dashboard)
 // ---------------------------
 app.get("/register",(req,res)=>{
-    res.send(`<h1 style='color:#eee;background:#222;padding:10px'>Registrierung</h1>
-    <form method='POST' style='color:#eee;background:#222;padding:10px'>
+    res.send(`<h1>Registrierung</h1>
+    <form method='POST'>
         Vorname: <input name='firstName' required/><br/>
         Nachname: <input name='lastName' required/><br/>
         Firma: <input name='company' required/><br/>
@@ -170,33 +166,54 @@ app.get("/register",(req,res)=>{
     </form>`);
 });
 
+// Neue Registrierungen müssen von Admin genehmigt werden
 app.post("/register",(req,res)=>{
     const accounts = loadAccounts();
-    const deviceToken = crypto.randomBytes(32).toString("hex");
+    const existing = accounts.find(a=>a.email===req.body.email);
+    if(existing) return res.send("E-Mail existiert bereits.");
+
     const {salt,hash} = hashPassword(req.body.password);
 
-    // erster registrierter Nutzer = Superadmin
-    let role = req.body.role;
-    if(accounts.length===0) role = "superadmin";
+    let role = "pending"; // zunächst Pending
+    if(accounts.length===0) role="superadmin"; // erster User = Superadmin
 
-    const newAcc = {
-        ...req.body,
-        role,
-        deviceTokens:[deviceToken],
-        salt, hash,
-        assignedBots:[],
-        telegramId:null,
-        approved: role==="superadmin" // Superadmin automatisch genehmigt
-    };
+    const newAcc = {...req.body, role, deviceTokens:[], salt, hash, assignedBots:[], telegramId:null};
     accounts.push(newAcc);
     saveAccounts(accounts);
-    setCookie(res,"deviceToken",deviceToken,{httpOnly:true, maxAge:60*60*24*30, path:'/'});
-    res.send("✅ Registriert. Bitte warten Sie auf Freigabe durch Admin. <a href='/dashboard'>Dashboard</a>");
+
+    res.send(role==="superadmin" ? "✅ Superadmin erstellt. <a href='/dashboard'>Dashboard</a>" : "✅ Registriert. Warte auf Admin-Freigabe.");
+});
+
+// Admin genehmigt neue Accounts
+app.get("/approve",requireAuth,requireAdmin,(req,res)=>{
+    const accounts = loadAccounts();
+    const pending = accounts.filter(a=>a.role==="pending");
+    let html = `<h1>Freigabe ausstehender Nutzer</h1>`;
+    pending.forEach(a=>{
+        html+=`<p>${a.firstName} ${a.lastName} (${a.email}) 
+        <form method='POST' style='display:inline' action='/approveUser'>
+        <input type='hidden' name='email' value='${a.email}'/>
+        Rolle: <select name='role'><option value='customer'>Kunde</option><option value='admin'>Admin</option></select>
+        <button>Freigeben</button>
+        </form></p>`;
+    });
+    res.send(html);
+});
+
+app.post("/approveUser",requireAuth,requireAdmin,(req,res)=>{
+    const accounts = loadAccounts();
+    const acc = accounts.find(a=>a.email===req.body.email);
+    if(!acc) return res.send("User nicht gefunden.");
+    acc.role = req.body.role;
+    const deviceToken = crypto.randomBytes(32).toString("hex");
+    acc.deviceTokens.push(deviceToken);
+    saveAccounts(accounts);
+    res.redirect("/approve");
 });
 
 app.get("/login",(req,res)=>{
-    res.send(`<h1 style='color:#eee;background:#222;padding:10px'>Login</h1>
-    <form method='POST' style='color:#eee;background:#222;padding:10px'>
+    res.send(`<h1>Login</h1>
+    <form method='POST'>
         E-Mail: <input name='email' required/><br/>
         Passwort: <input type='password' name='password'/><br/>
         <button>Login</button>
@@ -207,30 +224,31 @@ app.post("/login",(req,res)=>{
     const accounts = loadAccounts();
     const acc = accounts.find(a=>a.email===req.body.email);
     if(!acc || !verifyPassword(req.body.password, acc.salt, acc.hash)) return res.send("Ungültige Daten.");
-    if(!acc.approved) return res.send("Ihr Account muss erst vom Admin freigegeben werden.");
+    if(acc.role==="pending") return res.send("Account noch nicht freigegeben.");
     const deviceToken = crypto.randomBytes(32).toString("hex");
     acc.deviceTokens.push(deviceToken); saveAccounts(accounts);
     setCookie(res,"deviceToken",deviceToken,{httpOnly:true,maxAge:60*60*24*30,path:'/'});
     res.redirect('/dashboard');
 });
 
+// ---------------------------
+// Dashboard
+// ---------------------------
 app.get("/dashboard",requireAuth,(req,res)=>{
     const accounts = loadAccounts();
     const bots = loadBots();
-    let html = `<div style='color:#eee;background:#222;padding:10px'><h1>Dashboard</h1><p>${req.user.firstName} ${req.user.lastName} [${req.user.role}]</p>`;
 
-    // Pending Accounts
-    if(req.user.role==="admin" || req.user.role==="superadmin"){
-        html += "<h2>Freizugebende Registrierungen</h2>";
-        accounts.filter(a=>!a.approved).forEach(a=>{
-            html += `<p>${a.firstName} ${a.lastName} - <form method='POST' action='/approve' style='display:inline'>
-                <input type='hidden' name='email' value='${a.email}'/>
-                <button>Freigeben</button>
-            </form></p>`;
-        });
-    }
+    let html = `<html><head>
+    <style>
+    body { background:#121212; color:#eee; font-family:sans-serif; }
+    input, select, button, textarea { background:#222; color:#eee; border:1px solid #555; padding:5px; margin:2px; }
+    a { color:#0af; }
+    </style>
+    </head><body>`;
 
-    // Bots
+    html += `<h1>Dashboard</h1><p>${req.user.firstName} ${req.user.lastName} [${req.user.role}]</p>`;
+
+    // Bot-Management für Admin/Superadmin
     if(req.user.role==="admin" || req.user.role==="superadmin"){
         html+=`<h2>Bots</h2>`;
         bots.forEach(b=>{
@@ -239,7 +257,12 @@ app.get("/dashboard",requireAuth,(req,res)=>{
             Name: <input name='name' value='${b.name}' />
             Token: <input name='token' value='${b.token}' />
             <button>Speichern</button>
-            </form> <a href='/document/${b.id}'>Dokument</a></p>`;
+            </form> 
+            <form method='GET' style='display:inline' action='/assignBot'>
+            <input type='hidden' name='botId' value='${b.id}'/>
+            <button>Zuweisen</button>
+            </form>
+            <a href='/document/${b.id}'>Dokument</a></p>`;
         });
         html+=`<h2>Neuen Bot erstellen</h2>
             <form method='POST' action='/addbot'>
@@ -249,33 +272,39 @@ app.get("/dashboard",requireAuth,(req,res)=>{
             </form>`;
     }
 
-    // Rollen & Geräteverwaltung
-    if(req.user.role==="admin" || req.user.role==="superadmin"){
-        html += "<h2>Rollen & Geräte</h2><table border='1'><tr><th>Name</th><th>E-Mail</th><th>Rolle</th><th>Geräte</th><th>Aktion</th></tr>";
-        accounts.forEach(a=>{
-            html += `<tr>
-            <td>${a.firstName} ${a.lastName}</td>
-            <td>${a.email}</td>
-            <td>${a.role}</td>
-            <td>${(a.deviceTokens||[]).join(", ")}</td>
-            <td>
-                <form method='POST' action='/changerole' style='display:inline'>
-                    <input type='hidden' name='email' value='${a.email}'/>
-                    <select name='role'>
-                        <option value='customer' ${a.role==='customer'?'selected':''}>Kunde</option>
-                        <option value='admin' ${a.role==='admin'?'selected':''}>Admin</option>
-                        <option value='superadmin' ${a.role==='superadmin'?'selected':''}>Superadmin</option>
-                    </select>
-                    <button>Ändern</button>
-                </form>
-            </td>
-            </tr>`;
-        });
-        html += "</table>";
-    }
-
-    html += "</div>";
+    // Geräteübersicht
+    html+=`<h2>Alle Geräte</h2><ul>`;
+    accounts.forEach(a=>{
+        html+=`<li>${a.firstName} ${a.lastName} [${a.role}] - Geräte: ${(a.deviceTokens||[]).length}</li>`;
+    });
+    html+=`</ul></body></html>`;
     res.send(html);
+});
+
+// Bot-Zuweisung
+app.get("/assignBot",requireAuth,requireAdmin,(req,res)=>{
+    const accounts = loadAccounts();
+    const botId = req.query.botId;
+    const unassigned = accounts.filter(a=>a.role==="customer" && !(a.assignedBots||[]).includes(botId));
+    let html=`<h1>Kunden zuweisen</h1>`;
+    unassigned.forEach(c=>{
+        html+=`<form method='POST' style='display:inline' action='/assignCustomer'>
+        <input type='hidden' name='botId' value='${botId}'/>
+        <input type='hidden' name='email' value='${c.email}'/>
+        ${c.firstName} ${c.lastName} <button>Zuweisen</button>
+        </form><br/>`;
+    });
+    res.send(html);
+});
+
+app.post("/assignCustomer",requireAuth,requireAdmin,(req,res)=>{
+    const accounts = loadAccounts();
+    const acc = accounts.find(a=>a.email===req.body.email);
+    if(!acc) return res.send("Kunde nicht gefunden.");
+    acc.assignedBots = acc.assignedBots||[];
+    acc.assignedBots.push(req.body.botId);
+    saveAccounts(accounts);
+    res.redirect("/dashboard");
 });
 
 // --- Add / Update Bots ---
@@ -285,12 +314,9 @@ app.post('/addbot',requireAuth,requireAdmin,(req,res)=>{
     bots.push({id:botId,name:req.body.name,token:req.body.token});
     saveBots(bots);
 
-    // Alle Admins automatisch zuweisen
+    // Superadmin und alle Admins automatisch zuweisen
     const accounts = loadAccounts();
-    accounts.filter(a=>a.role==='admin'||a.role==='superadmin').forEach(a=>{
-        a.assignedBots=a.assignedBots||[]; 
-        if(!a.assignedBots.includes(botId)) a.assignedBots.push(botId);
-    });
+    accounts.filter(a=>a.role==='admin'||a.role==='superadmin').forEach(a=>{ a.assignedBots=a.assignedBots||[]; a.assignedBots.push(botId); });
     saveAccounts(accounts);
 
     initBot(req.body.token,botId);
@@ -306,38 +332,7 @@ app.post('/updatebot',requireAuth,requireAdmin,(req,res)=>{
     res.redirect('/dashboard');
 });
 
-// --- Approve Registration ---
-app.post('/approve',requireAuth,requireAdmin,(req,res)=>{
-    const accounts = loadAccounts();
-    const acc = accounts.find(a=>a.email===req.body.email);
-    if(!acc){ res.send("Account nicht gefunden"); return; }
-    acc.approved = true;
-    saveAccounts(accounts);
-    res.redirect('/dashboard');
-});
-
-// --- Change Role ---
-app.post('/changerole', requireAuth, requireAdmin, (req,res)=>{
-    const {email, role} = req.body;
-    const accounts = loadAccounts();
-    const acc = accounts.find(a=>a.email===email);
-    if(!acc){ res.send("Account nicht gefunden"); return; }
-
-    // Superadmin bleibt geschützt
-    if(acc.role==="superadmin" && role!=="superadmin"){
-        const superadminExists = accounts.some(a=>a.role==="superadmin" && a.email!==email);
-        if(!superadminExists){
-            res.send("Es muss mindestens ein Superadmin existieren!");
-            return;
-        }
-    }
-
-    acc.role = role;
-    saveAccounts(accounts);
-    res.redirect('/dashboard');
-});
-
-// --- Documents ---
+// Dokumente bearbeiten
 app.get('/document/:botId',requireAuth,requireAdmin,(req,res)=>{
     const f=ensureInfoFile(req.params.botId);
     const content = fs.readFileSync(f,'utf8');
