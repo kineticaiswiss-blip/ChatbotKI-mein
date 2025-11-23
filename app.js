@@ -1,4 +1,4 @@
-// app.js — Sicherer Multi-Kunden Telegram-Bot mit Admin-Genehmigung
+// app.js — Sicherer Multi-Kunden Telegram-Bot mit Dark Mode Dashboard
 import express from "express";
 import fs from "fs";
 import path from "path";
@@ -165,9 +165,13 @@ app.get("/register",(req,res)=>{
 app.post("/register",(req,res)=>{
     const accounts = loadAccounts();
     const {salt,hash} = hashPassword(req.body.password);
+
+    let role = "pending";
+    if(accounts.length===0) role="superadmin";
+
     const newAcc = {
         ...req.body,
-        role:"pending", // wird von Admin freigegeben
+        role,
         deviceTokens: [],
         salt, hash,
         assignedBots: [],
@@ -175,14 +179,19 @@ app.post("/register",(req,res)=>{
     };
     accounts.push(newAcc);
     saveAccounts(accounts);
-    res.send("✅ Registrierung erfolgreich. Ein Admin muss deinen Account freischalten. <a href='/login'>Login</a>");
+    if(role==="superadmin"){
+        res.send("✅ Du bist der erste Benutzer und wurdest Superadmin. <a href='/login'>Login</a>");
+    } else {
+        res.send("✅ Registrierung erfolgreich. Ein Admin muss deinen Account freischalten. <a href='/login'>Login</a>");
+    }
 });
 
 app.get("/login",(req,res)=>{
     res.send(`<h1>Login</h1>
     <form method='POST'>
         E-Mail: <input name='email' required/><br/>
-        Passwort: <input type='password' name='password'/><br/>
+        Passwort: <input type='password' name='password' id='pw'/>
+        <input type='checkbox' onclick='document.getElementById("pw").type=this.checked?"text":"password"'> Auge<br/>
         <button>Login</button>
     </form>`);
 });
@@ -202,24 +211,41 @@ app.post("/login",(req,res)=>{
 });
 
 // ---------------------------
-// Dashboard
+// Dashboard mit Dark Mode
 // ---------------------------
 app.get("/dashboard",requireAuth,(req,res)=>{
     const accounts = loadAccounts();
     const bots = loadBots();
-    let html = `<h1>Dashboard</h1><p>${req.user.firstName} ${req.user.lastName} [${req.user.role}]</p>`;
+    let html = `
+    <html>
+    <head>
+        <title>Dashboard</title>
+        <style>
+            body { background-color: #121212; color: #f0f0f0; font-family: Arial, sans-serif; padding:20px; }
+            h1,h2 { color:#fff; }
+            input, select, button, textarea { background:#1f1f1f; color:#fff; border:1px solid #333; padding:5px; margin:3px; }
+            button { cursor:pointer; background:#6200ee; color:#fff; border:none; border-radius:4px; }
+            button:hover { background:#3700b3; }
+            a { color:#bb86fc; text-decoration:none; }
+            a:hover { text-decoration:underline; }
+            form { display:inline; }
+        </style>
+    </head>
+    <body>
+    <h1>Dashboard</h1>
+    <p>${req.user.firstName} ${req.user.lastName} [${req.user.role}]</p>`;
 
     if(req.user.role==="admin" || req.user.role==="superadmin"){
-        // Bot-Verwaltung
         html += `<h2>Bots</h2>`;
         bots.forEach(b=>{
             html += `<p>${b.name} - 
                 <form method='POST' style='display:inline' action='/updatebot'>
                     <input type='hidden' name='id' value='${b.id}' />
                     Name: <input name='name' value='${b.name}' />
-                    Token: <input name='token' value='${b.token}' />
+                    Token: <input name='token' value='${b.token}'/>
                     <button>Speichern</button>
                 </form> 
+                <button onclick='navigator.clipboard.writeText("${b.id}")'>Bot-Link kopieren</button>
                 <a href='/document/${b.id}'>Dokument</a>
             </p>`;
         });
@@ -260,6 +286,7 @@ app.get("/dashboard",requireAuth,(req,res)=>{
         } else html += `<p>Dir sind noch keine Bots zugewiesen.</p>`;
     }
 
+    html += `</body></html>`;
     res.send(html);
 });
 
