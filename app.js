@@ -1,4 +1,4 @@
-// app.js — Sicherer Multi-Kunden Telegram-Bot mit persistentem Dashboard
+// app.js — Sicherer Multi-Kunden Telegram-Bot mit Dashboard und Darkmode
 import express from "express";
 import fs from "fs";
 import path from "path";
@@ -47,13 +47,19 @@ function parseCookies(req){
     return o;
 }
 
-function setCookie(res,name,value,opts={}){
+function setCookie(res,name,value,opts={}) {
     let c = `${name}=${encodeURIComponent(value)}`;
     if(opts.maxAge) c+= `; Max-Age=${opts.maxAge}`;
     if(opts.httpOnly) c+= `; HttpOnly`;
     if(opts.path) c+= `; Path=${opts.path}`;
     c+= `; SameSite=${opts.sameSite||'Lax'}`;
     res.setHeader("Set-Cookie", c);
+}
+
+function getClientIp(req){
+    const xf=req.headers["x-forwarded-for"]||req.headers["x-forwarded-for".toLowerCase()];
+    if(xf) return String(xf).split(",")[0].trim();
+    return (req.socket && req.socket.remoteAddress)||req.ip||"";
 }
 
 function ensureInfoFile(botId){
@@ -98,226 +104,234 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 // Telegram Bots
 // ---------------------------
 const botsInstances = {};
-
 async function initBot(botToken, botId){
     const bot = new Telegraf(botToken);
     const accounts = loadAccounts();
     const superadmin = accounts.find(a=>a.role==="superadmin");
-    const admins = accounts.filter(a=>a.role==="admin" || a.role==="superadmin");
+    const admins = accounts.filter(a=>a.role==="admin");
+    const allAdmins = [superadmin, ...admins];
     const customersWithBot = accounts.filter(a=>a.assignedBots?.includes(botId));
     const infoFile = ensureInfoFile(botId);
 
-    // Bot startet
     bot.start(ctx=>{
-        const uid = ctx.from.id;
-        if(admins.some(a=>a.telegramId===uid)) return ctx.reply("Admin-Modus aktiviert.");
+        const uid=ctx.from.id;
+        if(allAdmins.some(a=>a.telegramId===uid)) return ctx.reply("Admin-Modus aktiviert.");
         if(customersWithBot.some(c=>c.telegramId===uid)) return ctx.reply("Bot-Modus aktiviert.");
         ctx.reply("🚫 Du bist kein berechtigter Benutzer.");
     });
 
     bot.on("text", async ctx=>{
-        const uid = ctx.from.id;
-        const isAdmin = admins.some(a=>a.telegramId===uid);
-        const isCustomer = customersWithBot.some(c=>c.telegramId===uid);
+        const uid=ctx.from.id;
+        const isAdmin=allAdmins.some(a=>a.telegramId===uid);
+        const isCustomer=customersWithBot.some(c=>c.telegramId===uid);
         const msg = ctx.message.text.trim();
-
+        if(!isAdmin && !isCustomer){
+            ctx.reply("🚫 Keine Rechte."); 
+            return;
+        }
         try{
             const infoContent = fs.readFileSync(infoFile,"utf8") || "";
             const gpt = await openai.chat.completions.create({
                 model: "gpt-4o-mini",
                 messages: [
-                    {role:"system", content:`Du bist der Assistent von Bot ${botId}. Antworte nur basierend auf info.txt.`},
+                    {role:"system", content:`Du bist der Assistent von Bot ${botId}. Antworte basierend auf info.txt.`},
                     {role:"user", content: msg}
                 ],
                 max_tokens:200,
                 temperature:0
             });
             ctx.reply(gpt.choices[0].message.content.trim());
-        } catch(e){ console.error(e); ctx.reply("⚠️ Fehler beim Beantworten."); }
+        }catch(e){console.error(e); ctx.reply("⚠️ Fehler beim Beantworten.");}
     });
 
-    try { await bot.launch({ dropPendingUpdates:true }); } catch(err){ console.error(err); }
+    try { await bot.launch({ dropPendingUpdates: true }); } 
+    catch (err) { console.error(err); }
+
     botsInstances[botId] = bot;
 }
 
 // ---------------------------
-// Routes
+// Registrierung / Login
 // ---------------------------
-
-// Registration – neuer Benutzer wartet auf Admin-Freigabe
 app.get("/register",(req,res)=>{
     res.send(`<h1>Registrierung</h1>
-        <form method='POST'>
+    <form method='POST'>
         Vorname: <input name='firstName' required/><br/>
         Nachname: <input name='lastName' required/><br/>
         Firma: <input name='company' required/><br/>
         E-Mail: <input name='email' required/><br/>
         Telefon: <input name='phone' required/><br/>
-        Passwort: <input name='password' type='password'/><br/>
+        Passwort: <input name='password' type='password' id='pw'/><input type='checkbox' onclick='document.getElementById("pw").type=this.checked?"text":"password"'> Auge<br/>
         <button>Registrieren</button>
-        </form>
-        <p>Admin muss diese Registrierung freigeben.</p>`);
+    </form>`);
 });
 
 app.post("/register",(req,res)=>{
-    const accounts = loadAccounts();
-    const {salt, hash} = hashPassword(req.body.password);
+    let accounts = loadAccounts();
+    const deviceToken = crypto.randomBytes(32).toString("hex");
+    const {salt,hash} = hashPassword(req.body.password);
+    const isFirst = accounts.length === 0;
+    const role = isFirst ? "superadmin" : "customer";
+    const approved = isFirst; // erster ist Superadmin automatisch freigegeben
 
-    // Prüfen: erster Benutzer = Superadmin
-    let role = "customer";
-    if(accounts.length===0) role="superadmin";
-
-    const newAcc = {
-        ...req.body,
-        role,
-        deviceTokens: [],
-        salt,
-        hash,
-        assignedBots: [],
-        telegramId:null,
-        approved: role==="superadmin" // Superadmin sofort aktiv
-    };
+    const newAcc = {...req.body, role, approved, deviceTokens:[deviceToken], salt, hash, assignedBots:[], telegramId:null};
     accounts.push(newAcc);
     saveAccounts(accounts);
-    res.send(role==="superadmin" ? "✅ Superadmin erstellt. <a href='/dashboard'>Dashboard</a>" : "✅ Registrierung erstellt. Admin muss freigeben.");
+
+    setCookie(res,"deviceToken",deviceToken,{httpOnly:true, maxAge:60*60*24*30, path:'/'});
+    res.send(isFirst ? "✅ Superadmin erstellt. <a href='/dashboard'>Dashboard</a>" : "✅ Registriert. Warten auf Freigabe durch Admin.");
 });
 
-// Login
 app.get("/login",(req,res)=>{
     res.send(`<h1>Login</h1>
-        <form method='POST'>
+    <form method='POST'>
         E-Mail: <input name='email' required/><br/>
         Passwort: <input type='password' name='password'/><br/>
         <button>Login</button>
-        </form>`);
+    </form>`);
 });
 
 app.post("/login",(req,res)=>{
-    const accounts = loadAccounts();
+    let accounts = loadAccounts();
     const acc = accounts.find(a=>a.email===req.body.email);
-    if(!acc || !acc.approved || !verifyPassword(req.body.password, acc.salt, acc.hash)) return res.send("Ungültige Daten oder Benutzer noch nicht freigegeben.");
+    if(!acc || !verifyPassword(req.body.password, acc.salt, acc.hash)) 
+        return res.send("Ungültige Daten.");
+    if(!acc.approved) 
+        return res.send("⛔ Dein Account wurde noch nicht freigegeben.");
+
     const deviceToken = crypto.randomBytes(32).toString("hex");
-    acc.deviceTokens.push(deviceToken);
+    acc.deviceTokens.push(deviceToken); 
     saveAccounts(accounts);
     setCookie(res,"deviceToken",deviceToken,{httpOnly:true,maxAge:60*60*24*30,path:'/'});
-    res.redirect("/dashboard");
+    res.redirect('/dashboard');
 });
 
+// ---------------------------
 // Dashboard
+// ---------------------------
 app.get("/dashboard", requireAuth, (req,res)=>{
     const accounts = loadAccounts();
     const bots = loadBots();
 
-    let html = `<html><head><style>
-        body { background:#121212; color:#eee; font-family:sans-serif; }
-        input, select, button, textarea { background:#222;color:#eee;border:1px solid #555;padding:5px;margin:2px;}
-        a { color:#0af; }
-        </style></head><body>`;
-    html += `<h1>Dashboard</h1><p>${req.user.firstName} ${req.user.lastName} [${req.user.role}]</p>`;
+    let html = `<html><head>
+    <title>Dashboard</title>
+    <style>
+        body{background:#121212;color:#f0f0f0;font-family:sans-serif;}
+        input,select,button,textarea{background:#222;color:#f0f0f0;border:1px solid #555;padding:5px;}
+        a{color:#1e90ff;}
+    </style>
+    </head><body>`;
+    html+=`<h1>Dashboard</h1><p>${req.user.firstName} ${req.user.lastName} [${req.user.role}]</p>`;
 
-    // Admin-Freigaben
+    // Bot-Management für Admin/Superadmin
     if(req.user.role==="admin" || req.user.role==="superadmin"){
-        html += `<h2>Ausstehende Benutzer</h2>`;
-        accounts.filter(a=>!a.approved).forEach(a=>{
-            html += `<p>${a.firstName} ${a.lastName} - <form method='POST' style='display:inline' action='/approve'>
-                <input type='hidden' name='email' value='${a.email}' />
-                Rolle: <select name='role'><option value='customer'>Kunde</option><option value='admin'>Admin</option></select>
-                <button>Freigeben</button></form></p>`;
-        });
-    }
-
-    // Bots
-    if(req.user.role==="admin" || req.user.role==="superadmin"){
-        html += `<h2>Bots</h2>`;
+        html+=`<h2>Bots</h2>`;
         bots.forEach(b=>{
-            html += `<p>${b.name} 
-                <form method='POST' style='display:inline' action='/updatebot'>
-                <input type='hidden' name='id' value='${b.id}'/>
-                Name: <input name='name' value='${b.name}'/>
-                Token: <input name='token' value='${b.token}'/>
-                <button>Speichern</button></form>
-                <form method='POST' style='display:inline' action='/assign'>
-                <input type='hidden' name='botId' value='${b.id}'/>
-                <button>Kunden zuweisen</button></form>
-                </p>`;
+            html+=`<p>${b.name} - <form method='POST' style='display:inline' action='/updatebot'>
+            <input type='hidden' name='id' value='${b.id}' />
+            Name: <input name='name' value='${b.name}' />
+            Token: <input name='token' value='${b.token}' />
+            <button>Speichern</button>
+            </form> 
+            <a href='/document/${b.id}'>Dokument</a>
+            <form method='POST' action='/assign-bot' style='display:inline'>
+                <input type='hidden' name='botId' value='${b.id}' />
+                <button>Zuweisen</button>
+            </form>
+            </p>`;
         });
-        html += `<h2>Neuen Bot erstellen</h2>
-            <form method='POST' action='/addbot'>
-            Name: <input name='name' required/>
-            Token: <input name='token' required/>
-            <button>Erstellen</button>
-            </form>`;
     }
 
-    // Geräte / Tokens
-    html += `<h2>Alle Benutzer & Geräte</h2><ul>`;
+    // Alle Admins und Kunden mit Geräte anzeigen
+    html+=`<h2>Accounts & Geräte</h2><table border='1' cellpadding='5'>
+        <tr><th>Name</th><th>Rolle</th><th>Geräte</th><th>Freigabe</th></tr>`;
     accounts.forEach(a=>{
-        html += `<li>${a.firstName} ${a.lastName} [${a.role}] - Tokens: ${(a.deviceTokens||[]).join(", ")}</li>`;
+        html+=`<tr>
+            <td>${a.firstName} ${a.lastName}</td>
+            <td>${a.role}</td>
+            <td>${(a.deviceTokens||[]).length}</td>
+            <td>${a.approved ? "✅" : "⛔"}</td>
+        </tr>`;
     });
-    html += `</ul></body></html>`;
+    html+=`</table>`;
+    html+="</body></html>";
+
     res.send(html);
 });
 
-// Admin freigeben
-app.post("/approve", requireAuth, requireAdmin, (req,res)=>{
-    const accounts = loadAccounts();
-    const acc = accounts.find(a=>a.email===req.body.email);
-    if(acc){ acc.approved=true; acc.role=req.body.role; saveAccounts(accounts); }
-    res.redirect("/dashboard");
+// ---------------------------
+// Bot Zuweisung für Kunden
+// ---------------------------
+app.post('/assign-bot', requireAuth, requireAdmin, (req,res)=>{
+    let accounts = loadAccounts();
+    const bots = loadBots();
+    const botId = req.body.botId;
+    // Liste nicht zugewiesener Kunden
+    const unassigned = accounts.filter(a=>a.role==='customer' && (!a.assignedBots || !a.assignedBots.includes(botId)));
+    let html = `<h1>Kunden zu Bot ${botId} zuweisen</h1><ul>`;
+    unassigned.forEach(c=>{
+        html+=`<li>${c.firstName} ${c.lastName} 
+        <form method='POST' action='/do-assign' style='display:inline'>
+            <input type='hidden' name='botId' value='${botId}'/>
+            <input type='hidden' name='email' value='${c.email}'/>
+            <button>Zuordnen</button>
+        </form>
+        </li>`;
+    });
+    html+="</ul><a href='/dashboard'>Zurück</a>";
+    res.send(html);
 });
 
-// --- Bots erstellen / aktualisieren / zuweisen ---
+app.post('/do-assign', requireAuth, requireAdmin, (req,res)=>{
+    let accounts = loadAccounts();
+    const acc = accounts.find(a=>a.email===req.body.email);
+    acc.assignedBots = acc.assignedBots || [];
+    if(!acc.assignedBots.includes(req.body.botId)) acc.assignedBots.push(req.body.botId);
+    saveAccounts(accounts);
+    res.redirect('/dashboard');
+});
+
+// ---------------------------
+// Bots erstellen/aktualisieren
+// ---------------------------
 app.post('/addbot', requireAuth, requireAdmin, (req,res)=>{
-    const bots = loadBots();
+    let bots = loadBots();
     const botId = crypto.randomBytes(6).toString('hex');
     bots.push({id:botId,name:req.body.name,token:req.body.token});
     saveBots(bots);
 
-    const accounts = loadAccounts();
-    const admins = accounts.filter(a=>a.role==='admin'||a.role==='superadmin');
-    admins.forEach(a=>{ a.assignedBots = a.assignedBots || []; a.assignedBots.push(botId); });
+    let accounts = loadAccounts();
+    // Alle Admins inkl Superadmin automatisch zuweisen
+    accounts.filter(a=>a.role==='admin'||a.role==='superadmin').forEach(a=>{
+        a.assignedBots = a.assignedBots || [];
+        if(!a.assignedBots.includes(botId)) a.assignedBots.push(botId);
+    });
     saveAccounts(accounts);
 
-    initBot(req.body.token, botId);
-    res.redirect("/dashboard");
-});
-
-app.post('/updatebot', requireAuth, requireAdmin, (req,res)=>{
-    const bots = loadBots();
-    const b = bots.find(bb=>bb.id===req.body.id);
-    if(!b){ res.send('Bot nicht gefunden'); return; }
-    b.name=req.body.name; b.token=req.body.token; saveBots(bots);
-    initBot(req.body.token, req.body.id);
+    initBot(req.body.token,botId);
     res.redirect('/dashboard');
 });
 
-// Kunden zuweisen
-app.post('/assign', requireAuth, requireAdmin, (req,res)=>{
-    const botId = req.body.botId;
-    const accounts = loadAccounts();
-    // Liste der nicht zugewiesenen Kunden
-    const unassigned = accounts.filter(a=>a.role==='customer' && !(a.assignedBots||[]).includes(botId));
-    let html = `<h1>Kunden zuweisen für Bot ${botId}</h1><form method='POST' action='/doassign'>`;
-    unassigned.forEach(a=>{
-        html += `<input type='checkbox' name='emails' value='${a.email}'/> ${a.firstName} ${a.lastName}<br/>`;
-    });
-    html += `<input type='hidden' name='botId' value='${botId}'/><button>Zuordnen</button></form>`;
-    res.send(html);
+app.post('/updatebot', requireAuth, requireAdmin, (req,res)=>{
+    let bots = loadBots();
+    const b = bots.find(bb=>bb.id===req.body.id);
+    if(!b){ res.send('Bot nicht gefunden'); return; }
+    b.name=req.body.name; b.token=req.body.token; 
+    saveBots(bots);
+    initBot(req.body.token,req.body.id);
+    res.redirect('/dashboard');
 });
 
-app.post('/doassign', requireAuth, requireAdmin, (req,res)=>{
-    const botId = req.body.botId;
-    const emails = Array.isArray(req.body.emails) ? req.body.emails : [req.body.emails];
-    const accounts = loadAccounts();
-    emails.forEach(email=>{
-        const acc = accounts.find(a=>a.email===email);
-        if(acc){
-            acc.assignedBots = acc.assignedBots || [];
-            if(!acc.assignedBots.includes(botId)) acc.assignedBots.push(botId);
-        }
-    });
-    saveAccounts(accounts);
-    res.redirect("/dashboard");
+// Dokumente bearbeiten
+app.get('/document/:botId',requireAuth,requireAdmin,(req,res)=>{
+    const f=ensureInfoFile(req.params.botId);
+    const content = fs.readFileSync(f,'utf8');
+    res.send(`<form method='POST'><textarea name='content' rows='20' cols='80'>${content}</textarea><br/><button>Speichern</button></form>`);
+});
+app.post('/document/:botId',requireAuth,requireAdmin,(req,res)=>{
+    const f=ensureInfoFile(req.params.botId);
+    fs.writeFileSync(f,req.body.content,'utf8');
+    res.redirect('/dashboard');
 });
 
 // ---------------------------
