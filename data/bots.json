@@ -1,1 +1,13 @@
-[]
+[
+  {
+    "id": "nexorai",
+    "name": "NexorAI Bot",
+    "token": "8432330413:AAHwTMRS65OzaTEWCwP8JlZqEn5pGxO3R-s"
+  },
+  {
+    "id": "test1",
+    "name": "Kunde 1 Bot",
+    "token": "8095209153:AAHmzOMLYTeMCXLjfN3UoOt_kf0gdLzXPmk"
+  }
+]
+
