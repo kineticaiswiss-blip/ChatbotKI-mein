@@ -1,0 +1,14 @@
+{
+  "name": "chatbotki-mein",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "telegraf": "^4.16.2",
+    "openai": "^4.0.0"
+  }
+}
