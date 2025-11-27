@@ -106,3 +106,22 @@ router.get("/approve/:idx/:role", requireAuth, requireAdmin, (req,res)=>{
 });
 
 export default router;
+
+// ---------- CHANGE OWN PASSWORD ----------
+router.post("/change-password", requireAuth, (req, res) => {
+  const { oldPassword, newPassword } = req.body;
+  const accounts = loadAccounts();
+  const acc = accounts.find(a => a.email === req.user.email);
+
+  if (!verifyPassword(oldPassword, acc.salt, acc.hash)) {
+    return res.send("❌ Altes Passwort falsch.");
+  }
+
+  const { salt, hash } = hashPassword(newPassword);
+  acc.salt = salt;
+  acc.hash = hash;
+  saveAccounts(accounts);
+
+  res.send("✅ Passwort geändert. <a href='/dashboard'>Zurück</a>");
+});
+
