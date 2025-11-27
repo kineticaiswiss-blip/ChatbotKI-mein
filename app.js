@@ -1,5 +1,5 @@
 import express from "express";
-import { initAllBots } from "./bots/manager.js";
+import { initAllBots } from "./channels/telegram/manager.js";
 import dashboardRoutes from "./dashboard/routes.js";
 
 const app = express();
