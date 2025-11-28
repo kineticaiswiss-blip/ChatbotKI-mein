@@ -13,7 +13,7 @@ const SUPER_ADMIN_IDS = [
 ];
 
 // Optional: Info-Datei
-const DATA_DIR = "./data";
+const DATA_DIR = process.env.DATA_DIR || "/mnt/data";
 const INFO_DIR = path.join(DATA_DIR, "bots_info");
 if (!fs.existsSync(INFO_DIR)) fs.mkdirSync(INFO_DIR, { recursive: true });
 
