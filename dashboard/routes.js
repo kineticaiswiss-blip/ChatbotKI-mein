@@ -6,9 +6,10 @@ import {
   requireAuth,
   requireAdmin,
   setCookie,
+  parseCookies,
   hashPassword,
   verifyPassword
-} from "../auth.js";
+} from "./auth.js";
 
 const router = express.Router();
 
