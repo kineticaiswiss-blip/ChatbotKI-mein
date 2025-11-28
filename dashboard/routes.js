@@ -223,4 +223,5 @@ router.post("/change-password", requireAuth, (req, res) => {
     <a href="/dashboard">Zurück zum Dashboard</a>
   `);
 });
+export default router;
 
