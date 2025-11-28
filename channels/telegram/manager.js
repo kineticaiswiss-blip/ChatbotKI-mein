@@ -1,10 +1,20 @@
+import fs from "fs";
+import path from "path";
 import { launchTelegramBot } from "./oneBot.js";
 
-export function startTelegramBots() {
-  console.log("🚀 Starte Telegram-Bots...");
+const DATA_DIR = process.env.DATA_DIR || "/mnt/data";
+const BOTS_FILE = path.join(DATA_DIR, "bots.json");
 
-  launchTelegramBot({
-    botId: "nexorai",
-    token: process.env.BOT_TOKEN_1
+export function startTelegramBots() {
+  if (!fs.existsSync(BOTS_FILE)) return;
+
+  const bots = JSON.parse(fs.readFileSync(BOTS_FILE));
+  console.log(`🤖 Starte ${bots.length} Telegram-Bots...`);
+
+  bots.forEach(b => {
+    if (b.token) {
+      launchTelegramBot(b.id, b.token);
+      console.log(`✅ Bot ${b.id} gestartet`);
+    }
   });
 }
