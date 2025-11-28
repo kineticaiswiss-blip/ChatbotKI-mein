@@ -2,7 +2,8 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 
-const DATA_DIR = "./data";
+const DATA_DIR = path.resolve(process.cwd(), "data");
+console.log("🔍 DATA_DIR:", DATA_DIR);
 const ACCOUNTS_FILE = path.join(DATA_DIR, "accounts.json");
 
 function loadAccounts() {
