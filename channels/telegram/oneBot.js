@@ -11,7 +11,11 @@ const DATA_DIR = "./data";
 const ACCOUNTS_FILE = path.join(DATA_DIR, "accounts.json");
 const BOTS_INFO_DIR = path.join(DATA_DIR, "bots_info");
 
-// Hilfsfunktion: Admin-Telegram-IDs aus Dashboard laden
+/* =========================
+   HILFSFUNKTIONEN
+========================= */
+
+// Alle Telegram-IDs, die für diesen Bot Admin-Rechte haben
 function loadAdminTelegramIds(botId) {
   if (!fs.existsSync(ACCOUNTS_FILE)) return [];
 
@@ -19,44 +23,66 @@ function loadAdminTelegramIds(botId) {
 
   return accounts
     .filter(a =>
-      (a.role === "admin" || a.role === "superadmin") ||
-      (a.role === "customer" && (a.assignedBots || []).includes(botId))
+      a.telegramId &&
+      (
+        a.role === "admin" ||
+        a.role === "superadmin" ||
+        (a.role === "customer" && (a.assignedBots || []).includes(botId))
+      )
     )
-    .map(a => a.telegramId)
-    .filter(Boolean);
+    .map(a => String(a.telegramId));
 }
 
-export function initOneBot(botId, app) {
-  const infoPath = path.join(BOTS_INFO_DIR, botId + ".json");
-  if (!fs.existsSync(infoPath)) return;
+/* =========================
+   BOT STARTEN
+========================= */
+
+export async function initOneBot(botId) {
+
+  const infoPath = path.join(BOTS_INFO_DIR, `${botId}.json`);
+  if (!fs.existsSync(infoPath)) {
+    console.warn(`⚠️ Keine Bot-Info für ${botId}`);
+    return;
+  }
 
   const botData = JSON.parse(fs.readFileSync(infoPath, "utf8"));
-  if (!botData.token) return;
+  if (!botData.token) {
+    console.warn(`⚠️ Kein Token für Bot ${botId}`);
+    return;
+  }
 
   const bot = new Telegraf(botData.token);
 
+  /* =========================
+     START
+  ========================= */
   bot.start(ctx => {
-    ctx.reply("👋 Willkommen! Du kannst mir jederzeit eine Frage stellen.");
+    ctx.reply("👋 Hallo! Du kannst mir jederzeit eine Frage stellen.");
   });
 
+  /* =========================
+     TEXT HANDLER
+  ========================= */
   bot.on("text", async ctx => {
-    const text = ctx.message.text.trim();
-    const fromId = ctx.from.id;
+    const text = (ctx.message.text || "").trim();
+    const fromId = String(ctx.from.id);
 
-    // Admins aus Dashboard bestimmen
-    const adminTelegramIds = loadAdminTelegramIds(botId);
-    const isAdmin = adminTelegramIds.includes(fromId);
+    const adminIds = loadAdminTelegramIds(botId);
+    const isAdmin = adminIds.includes(fromId);
 
-    // 🔒 Telegram-Befehle nur für Admins
-    if (text.startsWith("/") && !isAdmin) {
-      return ctx.reply("⛔ Dieser Befehl ist nur für Admins erlaubt.");
+    /* 🔒 Befehle NUR für Admins */
+    if (text.startsWith("/")) {
+      if (!isAdmin) {
+        return ctx.reply("⛔ Dieser Befehl ist nur für Admins erlaubt.");
+      }
+      return ctx.reply("✅ Admin-Befehl erkannt (noch nicht implementiert).");
     }
 
-    // 👉 Jede andere Nachricht wird beantwortet (Admin & Nicht-Admin)
+    /* 🌍 JEDER bekommt eine Antwort */
     try {
-      const systemPrompt =
+      let systemPrompt =
         botData.system ||
-        "Du bist ein freundlicher Firmenassistent. Antworte sachlich und hilfreich nur basierend auf den bekannten Infos.";
+        "Du bist ein hilfsbereiter Firmenassistent. Antworte freundlich, klar und faktenbasiert.";
 
       const gpt = await openai.chat.completions.create({
         model: "gpt-4o-mini",
@@ -64,19 +90,35 @@ export function initOneBot(botId, app) {
           { role: "system", content: systemPrompt },
           { role: "user", content: text }
         ],
-        temperature: 0,
+        temperature: 0.2,
         max_tokens: 300
       });
 
-      const answer = gpt.choices[0].message.content.trim();
-      ctx.reply(answer || "🤔 Dazu habe ich leider keine Information.");
+      const answer = gpt.choices?.[0]?.message?.content?.trim();
+
+      await ctx.reply(
+        answer && answer.length > 0
+          ? answer
+          : "🤔 Dazu habe ich leider keine Information."
+      );
+
     } catch (err) {
-      console.error("OpenAI Fehler:", err);
-      ctx.reply("⚠️ Es ist ein Fehler aufgetreten. Bitte später erneut versuchen.");
+      console.error(`❌ OpenAI Fehler (${botId}):`, err);
+      ctx.reply("⚠️ Interner Fehler. Bitte später erneut versuchen.");
     }
   });
 
-  bot.launch({ dropPendingUpdates: true });
+  /* =========================
+     WICHTIG: WEBHOOK LÖSCHEN
+  ========================= */
+  await bot.telegram.deleteWebhook();
+
+  /* =========================
+     BOT STARTEN (POLLING)
+  ========================= */
+  await bot.launch({ dropPendingUpdates: true });
   console.log(`🤖 Bot aktiv: ${botId}`);
 }
+
+/* ✅ Alias für ältere Manager-Logik */
 export const launchTelegramBot = initOneBot;
