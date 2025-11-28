@@ -6,7 +6,6 @@ import {
   requireAuth,
   requireAdmin,
   setCookie,
-  parseCookies,
   hashPassword,
   verifyPassword
 } from "./auth.js";
@@ -23,44 +22,49 @@ router.get("/register",(req,res)=>{
     Vorname <input name="firstName" required><br>
     Nachname <input name="lastName" required><br>
     Email <input name="email" required><br>
-    Passwort <input type="password" name="password" required><br>
+    Passwort 
+    <input type="password" id="pwReg" name="password" required>
+    <button type="button" onclick="togglePw('pwReg')">👁</button>
+    <br>
     <button>Registrieren</button>
   </form>
+
+  <script>
+    function togglePw(id){
+      const el=document.getElementById(id);
+      el.type = el.type==="password" ? "text" : "password";
+    }
+  </script>
   `);
 });
 
 router.post("/register",(req,res)=>{
   const accounts = loadAccounts();
-  const isFirst = accounts.length === 0;
-
-  if(accounts.find(a => a.email === req.body.email)){
+  if(accounts.find(a=>a.email===req.body.email))
     return res.send("❌ Email existiert bereits.");
-  }
 
+  const isFirst = accounts.length === 0;
   const { salt, hash } = hashPassword(req.body.password);
-  const deviceToken = crypto.randomBytes(32).toString("hex");
+  const token = crypto.randomBytes(32).toString("hex");
 
   accounts.push({
-    firstName: req.body.firstName,
-    lastName: req.body.lastName,
-    email: req.body.email,
-    salt,
-    hash,
+    firstName:req.body.firstName,
+    lastName:req.body.lastName,
+    email:req.body.email,
+    salt,hash,
     role: isFirst ? "superadmin" : "customer",
     approved: isFirst,
-    deviceTokens: [deviceToken],
-    assignedBots: [],
-    telegramId: null
+    deviceTokens:[token],
+    assignedBots:[],
+    telegramId:null
   });
 
   saveAccounts(accounts);
-  setCookie(res,"deviceToken",deviceToken,{httpOnly:true,path:"/"});
+  setCookie(res,"deviceToken",token,{httpOnly:true,path:"/"});
 
-  res.send(
-    isFirst
-      ? "✅ Superadmin erstellt. <a href='/dashboard'>Dashboard</a>"
-      : "✅ Registriert. Warten auf Freigabe durch Admin."
-  );
+  res.send(isFirst
+    ? "✅ Superadmin erstellt. <a href='/dashboard'>Dashboard</a>"
+    : "✅ Registriert – wartet auf Freigabe.");
 });
 
 /* =========================
@@ -71,23 +75,30 @@ router.get("/login",(req,res)=>{
   <h1>Login</h1>
   <form method="POST">
     Email <input name="email" required><br>
-    Passwort <input type="password" name="password" required><br>
+    Passwort 
+    <input type="password" id="pwLogin" name="password" required>
+    <button type="button" onclick="togglePw('pwLogin')">👁</button>
+    <br>
     <button>Login</button>
   </form>
+
+  <script>
+    function togglePw(id){
+      const el=document.getElementById(id);
+      el.type = el.type==="password" ? "text" : "password";
+    }
+  </script>
   `);
 });
 
 router.post("/login",(req,res)=>{
   const accounts = loadAccounts();
   const acc = accounts.find(a=>a.email===req.body.email);
-
-  if(!acc || !verifyPassword(req.body.password, acc.salt, acc.hash)){
+  if(!acc || !verifyPassword(req.body.password,acc.salt,acc.hash))
     return res.send("❌ Login fehlgeschlagen.");
-  }
 
-  if(!acc.approved){
+  if(!acc.approved)
     return res.send("⛔ Account noch nicht freigegeben.");
-  }
 
   const token = crypto.randomBytes(32).toString("hex");
   acc.deviceTokens.push(token);
@@ -103,108 +114,88 @@ router.post("/login",(req,res)=>{
 router.get("/dashboard", requireAuth, (req,res)=>{
   const accounts = loadAccounts();
 
-  let html = `<h1>Dashboard</h1>
-  <p>${req.user.firstName} ${req.user.lastName} (${req.user.role})</p>`;
+  let html = `
+  <html><body>
+  <h1>Dashboard</h1>
+  <p>${req.user.firstName} (${req.user.role})</p>
 
-  /* Passwort ändern (ALLE) */
-  html += `
+  <script>
+    setInterval(() => window.location.reload(), 5*60*1000);
+  </script>
+
   <h2>Passwort ändern</h2>
   <form method="POST" action="/change-password">
-    Altes Passwort <input type="password" name="oldPassword" required><br>
-    Neues Passwort <input type="password" name="newPassword" required><br>
+    Alt <input type="password" id="oldPw" name="oldPassword" required>
+    <button type="button" onclick="togglePw('oldPw')">👁</button><br>
+    Neu <input type="password" id="newPw" name="newPassword" required>
+    <button type="button" onclick="togglePw('newPw')">👁</button><br>
     <button>Ändern</button>
   </form>
   `;
 
-  /* Admin-Bereich */
-  if(req.user.role === "admin" || req.user.role === "superadmin"){
-    html += `<h2>Accounts</h2>`;
-
+  if(req.user.role!=="customer"){
+    html+=`<h2>Accounts</h2>`;
     accounts.forEach((a,i)=>{
-      html += `<p>
-        ${a.firstName} ${a.lastName} – ${a.email} – ${a.role} – ${a.approved ? "✅" : "⛔"}`;
+      html+=`
+      <p>${a.firstName} ${a.lastName} – ${a.email} – ${a.role} – ${a.approved?"✅":"⛔"}
+      ${!a.approved ? `
+        <a href="/approve/${i}/admin">Admin</a> |
+        <a href="/approve/${i}/customer">Kunde</a>
+      ` : ""}
+      `;
 
-      if(!a.approved){
-        html += `
-          <a href="/approve/${i}/admin">Admin</a> |
-          <a href="/approve/${i}/customer">Kunde</a>
-        `;
-      }
-
-      if(req.user.role === "superadmin"){
-        html += `
-        <form method="POST" action="/reset-password" style="display:inline">
+      if(req.user.role==="superadmin"){
+        html+=`
+        <form method="POST" action="/delete-account" style="display:inline">
           <input type="hidden" name="email" value="${a.email}">
-          <button>Reset PW</button>
+          <button>🗑 Löschen</button>
         </form>`;
       }
 
-      html += `</p>`;
+      html+=`</p>`;
     });
   }
 
+  html+=`</body></html>`;
   res.send(html);
 });
 
 /* =========================
-   APPROVE ACCOUNT
+   APPROVE / DELETE
 ========================= */
 router.get("/approve/:idx/:role", requireAuth, requireAdmin, (req,res)=>{
   const accounts = loadAccounts();
   const acc = accounts[req.params.idx];
-
-  if(!acc) return res.send("❌ Account nicht gefunden.");
+  if(!acc) return res.send("Nicht gefunden.");
 
   acc.role = req.params.role;
   acc.approved = true;
-
   saveAccounts(accounts);
   res.redirect("/dashboard");
 });
 
-/* =========================
-   CHANGE OWN PASSWORD
-========================= */
+router.post("/delete-account", requireAuth, (req,res)=>{
+  if(req.user.role!=="superadmin")
+    return res.send("🚫 Nur Superadmin.");
+
+  let accounts = loadAccounts();
+  accounts = accounts.filter(a=>a.email!==req.body.email);
+  saveAccounts(accounts);
+  res.redirect("/dashboard");
+});
+
 router.post("/change-password", requireAuth, (req,res)=>{
   const accounts = loadAccounts();
   const acc = accounts.find(a=>a.email===req.user.email);
 
-  if(!verifyPassword(req.body.oldPassword, acc.salt, acc.hash)){
-    return res.send("❌ Altes Passwort falsch.");
-  }
+  if(!verifyPassword(req.body.oldPassword,acc.salt,acc.hash))
+    return res.send("❌ Falsches Passwort.");
 
   const { salt, hash } = hashPassword(req.body.newPassword);
-  acc.salt = salt;
-  acc.hash = hash;
-
+  acc.salt=salt; acc.hash=hash;
   saveAccounts(accounts);
+
   res.send("✅ Passwort geändert. <a href='/dashboard'>Zurück</a>");
 });
 
-/* =========================
-   RESET PASSWORD (SUPERADMIN ONLY)
-========================= */
-router.post("/reset-password", requireAuth, (req,res)=>{
-  if(req.user.role !== "superadmin"){
-    return res.send("🚫 Nur Superadmin.");
-  }
-
-  const accounts = loadAccounts();
-  const acc = accounts.find(a=>a.email===req.body.email);
-
-  if(!acc) return res.send("❌ Account nicht gefunden.");
-
-  const tempPassword = crypto.randomBytes(4).toString("hex");
-  const { salt, hash } = hashPassword(tempPassword);
-
-  acc.salt = salt;
-  acc.hash = hash;
-  saveAccounts(accounts);
-
-  res.send(`✅ Neues Passwort für ${acc.email}: <b>${tempPassword}</b>
-  <br><a href="/dashboard">Zurück</a>`);
-});
-
 export default router;
-
-
