@@ -2,8 +2,9 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 
-const DATA_DIR = process.env.DATA_DIR || "/mnt/data";
+const DATA_DIR = process.env.DATA_DIR || "/opt/render/project/src/data";
 const ACCOUNTS_FILE = path.join(DATA_DIR, "accounts.json");
+
 
 function loadAccounts() {
   if (!fs.existsSync(ACCOUNTS_FILE)) return [];
