@@ -184,18 +184,43 @@ router.post("/delete-account", requireAuth, (req,res)=>{
   res.redirect("/dashboard");
 });
 
-router.post("/change-password", requireAuth, (req,res)=>{
+router.post("/change-password", requireAuth, (req, res) => {
+  const { oldPassword, newPassword } = req.body;
+
+  if (!oldPassword || !newPassword) {
+    return res.send("❌ Bitte beide Felder ausfüllen.");
+  }
+
   const accounts = loadAccounts();
-  const acc = accounts.find(a=>a.email===req.user.email);
 
-  if(!verifyPassword(req.body.oldPassword,acc.salt,acc.hash))
-    return res.send("❌ Falsches Passwort.");
+  // ✅ WICHTIG: User per EMAIL aus Cookie-User finden
+  const accIndex = accounts.findIndex(
+    a => a.email === req.user.email
+  );
 
-  const { salt, hash } = hashPassword(req.body.newPassword);
-  acc.salt=salt; acc.hash=hash;
+  if (accIndex === -1) {
+    return res.send("❌ Account nicht gefunden.");
+  }
+
+  const acc = accounts[accIndex];
+
+  // ✅ Altes Passwort prüfen
+  if (!verifyPassword(oldPassword, acc.salt, acc.hash)) {
+    return res.send("❌ Altes Passwort ist falsch.");
+  }
+
+  // ✅ Neues Passwort hashen
+  const { salt, hash } = hashPassword(newPassword);
+
+  acc.salt = salt;
+  acc.hash = hash;
+
+  // ✅ GANZ WICHTIG
   saveAccounts(accounts);
 
-  res.send("✅ Passwort geändert. <a href='/dashboard'>Zurück</a>");
+  res.send(`
+    ✅ Passwort wurde geändert.<br><br>
+    <a href="/dashboard">Zurück zum Dashboard</a>
+  `);
 });
 
-export default router;
