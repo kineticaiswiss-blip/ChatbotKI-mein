@@ -2,7 +2,7 @@
 import fs from "fs";
 import path from "path";
 
-const DATA_DIR = "./data";
+const DATA_DIR = process.env.DATA_DIR || "/mnt/data";
 
 export function readJSON(relPath, fallback = []) {
   const file = path.join(DATA_DIR, relPath);
