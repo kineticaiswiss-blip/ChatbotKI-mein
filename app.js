@@ -1,11 +1,11 @@
 import express from "express";
-import { startTelegramBots } from "./channels/telegram/manager.js";
+import dashboardRoutes from "./dashboard/routes.js";
 
 const app = express();
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
 
-startTelegramBots();
+app.use("/", dashboardRoutes);
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-  console.log(`✅ Server läuft auf Port ${PORT}`);
-});
+app.listen(PORT, () => console.log("✅ Dashboard läuft auf Port", PORT));
