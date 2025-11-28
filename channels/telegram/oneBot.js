@@ -79,3 +79,4 @@ export function initOneBot(botId, app) {
   bot.launch({ dropPendingUpdates: true });
   console.log(`🤖 Bot aktiv: ${botId}`);
 }
+export const launchTelegramBot = initOneBot;
