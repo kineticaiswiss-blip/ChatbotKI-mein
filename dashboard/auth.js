@@ -5,10 +5,9 @@ import crypto from "crypto";
 /* =========================
    PERSISTENTE DISK (RENDER)
 ========================= */
-const DATA_DIR = process.env.DATA_DIR || "/var/data";
+const DATA_DIR = path.join(process.cwd(), "data");
 const ACCOUNTS_FILE = path.join(DATA_DIR, "accounts.json");
 
-// ✅ Disk & Datei erzwingen
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
@@ -34,29 +33,13 @@ export function saveAccounts(accounts) {
 /* =========================
    AUTH
 ========================= */
-export function parseCookies(req) {
-  const h = req.headers?.cookie || "";
-  const o = {};
-  h.split(";").forEach(p => {
-    const i = p.indexOf("=");
-    if (i > -1) o[p.slice(0, i).trim()] = decodeURIComponent(p.slice(i + 1));
-  });
-  return o;
-}
-
-export function setCookie(res, name, value, opts = {}) {
-  let c = `${name}=${encodeURIComponent(value)}; Path=/; SameSite=Lax`;
-  if (opts.httpOnly) c += "; HttpOnly";
-  if (opts.maxAge) c += `; Max-Age=${opts.maxAge}`;
-  res.setHeader("Set-Cookie", c);
-}
-
 export function requireAuth(req, res, next) {
-  const token = parseCookies(req).deviceToken;
-  if (!token) return res.redirect("/login");
+  if (!req.session?.userEmail) {
+    return res.redirect("/login");
+  }
 
-  const acc = loadAccounts().find(a =>
-    (a.deviceTokens || []).includes(token)
+  const acc = loadAccounts().find(
+    a => a.email === req.session.userEmail
   );
 
   if (!acc) return res.redirect("/login");
@@ -67,7 +50,9 @@ export function requireAuth(req, res, next) {
 }
 
 export function requireAdmin(req, res, next) {
-  if (req.user.role === "admin" || req.user.role === "superadmin") return next();
+  if (req.user.role === "admin" || req.user.role === "superadmin") {
+    return next();
+  }
   res.send("🚫 Nur Admins");
 }
 
