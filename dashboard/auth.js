@@ -47,11 +47,11 @@ function parseCookies(req) {
   return cookies;
 }
 
-function setCookie(res, name, value, opts = {}) {
-  let cookie = `${name}=${encodeURIComponent(value)}; Path=/; SameSite=Lax`;
-  if (opts.httpOnly) cookie += "; HttpOnly";
-  if (opts.maxAge) cookie += `; Max-Age=${opts.maxAge}`;
-  res.setHeader("Set-Cookie", cookie);
+export function setCookie(res, name, value, opts = {}) {
+  let c = `${name}=${encodeURIComponent(value)}; Path=/; SameSite=Lax`;
+  if (opts.httpOnly) c += "; HttpOnly";
+  if (opts.maxAge) c += `; Max-Age=${opts.maxAge}`;
+  res.setHeader("Set-Cookie", c);
 }
 
 /* =========================
