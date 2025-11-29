@@ -38,7 +38,7 @@ router.post("/register", (req, res) => {
   const { firstName, lastName, email, phone, password, password2 } = req.body;
 
   if (!email && !phone) {
-    return res.send("❌ Email oder Telefonnummer erforderlich.");
+    return res.send("❌ Email ODER Telefonnummer erforderlich.");
   }
 
   if (password !== password2) {
@@ -54,13 +54,37 @@ router.post("/register", (req, res) => {
   if (phone && accounts.some(a => a.phone === phone)) {
     return res.send("❌ Telefonnummer existiert bereits.");
   }
-const forceSuperAdmin =
-  email === FORCE_SUPERADMIN_EMAIL ||
-  phone === FORCE_SUPERADMIN_EMAIL;
- const superAdminExists =
-  !forceSuperAdmin && accounts.some(a => a.role === "superadmin");
+
+  const isFirstAccount = accounts.length === 0;
   const { salt, hash } = hashPassword(password);
   const token = crypto.randomBytes(32).toString("hex");
+
+  accounts.push({
+    firstName,
+    lastName,
+
+    email: email || null,
+    phone: phone || null,
+
+    salt,
+    hash,
+
+    role: isFirstAccount ? "superadmin" : "customer",
+    approved: isFirstAccount,
+
+    deviceTokens: [token],
+    assignedBots: []
+  });
+
+  saveAccounts(accounts);
+  setCookie(res, "deviceToken", token, { httpOnly: true });
+
+  res.send(
+    isFirstAccount
+      ? "✅ Superadmin erstellt. <a href='/dashboard'>Dashboard</a>"
+      : "✅ Registriert – wartet auf Freigabe."
+  );
+});
 
   accounts.push({
     firstName,
@@ -103,9 +127,15 @@ router.post("/login", (req, res) => {
   const { identifier, password } = req.body;
   const accounts = loadAccounts();
 
-  const acc = accounts.find(
-    a => a.email === identifier || a.phone === identifier
-  );
+  let acc;
+
+  if (/^\d+$/.test(identifier)) {
+    // ✅ NUR ZAHLEN → TELEFON
+    acc = accounts.find(a => a.phone === identifier);
+  } else {
+    // ✅ ALLES ANDERE → EMAIL
+    acc = accounts.find(a => a.email === identifier);
+  }
 
   if (!acc || !verifyPassword(password, acc.salt, acc.hash)) {
     return res.send("❌ Login fehlgeschlagen.");
@@ -116,13 +146,15 @@ router.post("/login", (req, res) => {
   }
 
   const token = crypto.randomBytes(32).toString("hex");
-  acc.deviceTokens.push(token);
-  saveAccounts(accounts);
 
+  // ✅ nur ein aktives Gerät (empfohlen)
+  acc.deviceTokens = [token];
+
+  saveAccounts(accounts);
   setCookie(res, "deviceToken", token, { httpOnly: true });
+
   res.redirect("/dashboard");
 });
-
 /* =========================
    DASHBOARD
 ========================= */
