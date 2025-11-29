@@ -2,26 +2,44 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 
-const DATA_DIR = process.env.DATA_DIR || "/opt/render/project/src/data";
+/* =========================
+   PERSISTENTE DISK (RENDER)
+========================= */
+const DATA_DIR = "/data";
 const ACCOUNTS_FILE = path.join(DATA_DIR, "accounts.json");
 
+// ✅ Disk & Datei erzwingen
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+if (!fs.existsSync(ACCOUNTS_FILE)) {
+  fs.writeFileSync(ACCOUNTS_FILE, "[]", "utf8");
+}
 
+/* =========================
+   STORAGE
+========================= */
 function loadAccounts() {
-  if (!fs.existsSync(ACCOUNTS_FILE)) return [];
   return JSON.parse(fs.readFileSync(ACCOUNTS_FILE, "utf8"));
 }
 
-function saveAccounts(a) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  fs.writeFileSync(ACCOUNTS_FILE, JSON.stringify(a, null, 2), "utf8");
+function saveAccounts(accounts) {
+  fs.writeFileSync(
+    ACCOUNTS_FILE,
+    JSON.stringify(accounts, null, 2),
+    "utf8"
+  );
 }
 
+/* =========================
+   AUTH
+========================= */
 export function parseCookies(req) {
   const h = req.headers?.cookie || "";
   const o = {};
   h.split(";").forEach(p => {
     const i = p.indexOf("=");
-    if (i > -1) o[p.slice(0, i)] = decodeURIComponent(p.slice(i + 1));
+    if (i > -1) o[p.slice(0, i).trim()] = decodeURIComponent(p.slice(i + 1));
   });
   return o;
 }
@@ -53,6 +71,9 @@ export function requireAdmin(req, res, next) {
   res.send("🚫 Nur Admins");
 }
 
+/* =========================
+   PASSWORDS
+========================= */
 export function hashPassword(pw, salt = null) {
   salt = salt || crypto.randomBytes(16).toString("hex");
   return {
@@ -63,7 +84,10 @@ export function hashPassword(pw, salt = null) {
 
 export function verifyPassword(pw, salt, hash) {
   const check = crypto.scryptSync(pw, salt, 64).toString("hex");
-  return crypto.timingSafeEqual(Buffer.from(check, "hex"), Buffer.from(hash, "hex"));
+  return crypto.timingSafeEqual(
+    Buffer.from(check, "hex"),
+    Buffer.from(hash, "hex")
+  );
 }
 
 export { loadAccounts, saveAccounts };
