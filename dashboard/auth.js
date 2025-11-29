@@ -5,7 +5,7 @@ import crypto from "crypto";
 /* =========================
    PERSISTENTE DISK (RENDER)
 ========================= */
-const DATA_DIR = "/data";
+const DATA_DIR = process.env.DATA_DIR || "/var/data";
 const ACCOUNTS_FILE = path.join(DATA_DIR, "accounts.json");
 
 // ✅ Disk & Datei erzwingen
@@ -19,11 +19,11 @@ if (!fs.existsSync(ACCOUNTS_FILE)) {
 /* =========================
    STORAGE
 ========================= */
-function loadAccounts() {
+export function loadAccounts() {
   return JSON.parse(fs.readFileSync(ACCOUNTS_FILE, "utf8"));
 }
 
-function saveAccounts(accounts) {
+export function saveAccounts(accounts) {
   fs.writeFileSync(
     ACCOUNTS_FILE,
     JSON.stringify(accounts, null, 2),
@@ -89,5 +89,3 @@ export function verifyPassword(pw, salt, hash) {
     Buffer.from(hash, "hex")
   );
 }
-
-export { loadAccounts, saveAccounts };
