@@ -3,16 +3,12 @@ import path from "path";
 import crypto from "crypto";
 
 /* =========================
-   RENDER PERSISTENT DISK
+   RENDER DISK (FIX!)
 ========================= */
-const DATA_DIR = "/data";
+const DATA_DIR = process.env.RENDER_DISK_PATH || "/var/data";
 const ACCOUNTS_FILE = path.join(DATA_DIR, "accounts.json");
 
-// Disk & Datei erzwingen
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-}
-
+// KEIN mkdir auf Root – nur wenn Disk da ist
 if (!fs.existsSync(ACCOUNTS_FILE)) {
   fs.writeFileSync(ACCOUNTS_FILE, "[]", "utf8");
 }
@@ -48,7 +44,6 @@ export function parseCookies(req) {
 export function setCookie(res, name, value, opts = {}) {
   let c = `${name}=${encodeURIComponent(value)}; Path=/; SameSite=Lax`;
   if (opts.httpOnly) c += "; HttpOnly";
-  if (opts.maxAge) c += `; Max-Age=${opts.maxAge}`;
   res.setHeader("Set-Cookie", c);
 }
 
