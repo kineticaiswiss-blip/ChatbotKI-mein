@@ -4,19 +4,22 @@ import fs from "fs";
 import path from "path";
 
 /* =========================
-   KONFIGURATION
+   PERSISTENTE DISK
 ========================= */
+const DATA_DIR = "/data";
+const INFO_DIR = path.join(DATA_DIR, "bots_info");
 
-// ✅ Telegram-Admin-IDs IMMER als STRING
+if (!fs.existsSync(INFO_DIR)) {
+  fs.mkdirSync(INFO_DIR, { recursive: true });
+}
+
+/* =========================
+   KONFIG
+========================= */
+// ✅ Telegram Admin IDs ALS STRING
 const SUPER_ADMIN_IDS = [
   "6369024996"
 ];
-
-// ✅ ABSOLUTER & RENDER-SICHERER PFAD
-const DATA_DIR = path.join(process.cwd(), "data");
-const INFO_DIR = path.join(DATA_DIR, "bots_info");
-
-fs.mkdirSync(INFO_DIR, { recursive: true });
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
@@ -25,7 +28,6 @@ const openai = new OpenAI({
 /* =========================
    BOT START
 ========================= */
-
 export async function launchTelegramBot({ botId, token }) {
   if (!botId || !token) {
     console.log(`❌ Bot ${botId}: fehlende ID oder Token`);
@@ -36,11 +38,7 @@ export async function launchTelegramBot({ botId, token }) {
 
   const infoFile = path.join(INFO_DIR, `${botId}.txt`);
   if (!fs.existsSync(infoFile)) {
-    fs.writeFileSync(
-      infoFile,
-      "Firmeninfos:\n",
-      "utf8"
-    );
+    fs.writeFileSync(infoFile, "Firmeninfos:\n", "utf8");
   }
 
   bot.start(ctx => {
@@ -52,7 +50,7 @@ export async function launchTelegramBot({ botId, token }) {
     const userId = String(ctx.from.id);
     const isAdmin = SUPER_ADMIN_IDS.includes(userId);
 
-    /* ===== ADMIN-BEFEHLE ===== */
+    // 🔒 Admin-Befehle
     if (text.startsWith("/")) {
       if (!isAdmin) {
         return ctx.reply("🚫 Dieser Befehl ist nur für Admins.");
@@ -64,14 +62,14 @@ export async function launchTelegramBot({ botId, token }) {
 
       if (text.startsWith("/info ")) {
         const newInfo = text.replace("/info", "").trim();
-        fs.writeFileSync(infoFile, newInfo + "\n", "utf8");
+        fs.appendFileSync(infoFile, newInfo + "\n", "utf8");
         return ctx.reply("✅ Firmeninfo gespeichert.");
       }
 
       return ctx.reply("✅ Admin-Befehl erkannt.");
     }
 
-    /* ===== NORMALE FRAGEN (ALLES & JEDER) ===== */
+    // 🌍 ALLE anderen Fragen
     try {
       const info = fs.readFileSync(infoFile, "utf8");
 
@@ -98,10 +96,8 @@ export async function launchTelegramBot({ botId, token }) {
   });
 
   try {
-    // ✅ GANZ WICHTIG AUF RENDER
     await bot.telegram.deleteWebhook();
     await bot.launch({ dropPendingUpdates: true });
-
     console.log(`✅ Telegram-Bot gestartet: ${botId}`);
   } catch (err) {
     console.error(`❌ Bot ${botId} konnte nicht gestartet werden`, err);
