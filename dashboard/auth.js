@@ -3,12 +3,12 @@ import path from "path";
 import crypto from "crypto";
 
 /* =========================
-   RENDER DISK (FIX!)
+   RENDER DISK (FIX)
 ========================= */
-const DATA_DIR = process.env.RENDER_DISK_PATH || "/var/data";
+const DATA_DIR = "/var/data";               // ✅ GENAU DIES
 const ACCOUNTS_FILE = path.join(DATA_DIR, "accounts.json");
 
-// KEIN mkdir auf Root – nur wenn Disk da ist
+// ✅ NUR PRÜFEN – KEIN mkdir AUF ROOT
 if (!fs.existsSync(ACCOUNTS_FILE)) {
   fs.writeFileSync(ACCOUNTS_FILE, "[]", "utf8");
 }
@@ -29,7 +29,7 @@ export function saveAccounts(accounts) {
 }
 
 /* =========================
-   AUTH
+   COOKIES
 ========================= */
 export function parseCookies(req) {
   const h = req.headers?.cookie || "";
@@ -44,9 +44,13 @@ export function parseCookies(req) {
 export function setCookie(res, name, value, opts = {}) {
   let c = `${name}=${encodeURIComponent(value)}; Path=/; SameSite=Lax`;
   if (opts.httpOnly) c += "; HttpOnly";
+  if (opts.maxAge) c += `; Max-Age=${opts.maxAge}`;
   res.setHeader("Set-Cookie", c);
 }
 
+/* =========================
+   AUTH MIDDLEWARE
+========================= */
 export function requireAuth(req, res, next) {
   const token = parseCookies(req).deviceToken;
   if (!token) return res.redirect("/login");
@@ -56,7 +60,7 @@ export function requireAuth(req, res, next) {
   );
 
   if (!acc) return res.redirect("/login");
-  if (!acc.approved) return res.send("⛔ Wartet auf Admin-Freigabe");
+  if (!acc.approved) return res.send("⛔ Wartet auf Freigabe");
 
   req.user = acc;
   next();
