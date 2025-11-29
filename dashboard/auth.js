@@ -1,7 +1,6 @@
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
-export const FORCE_SUPERADMIN_EMAIL = "0774725182";
 /* =========================
    PERSISTENTE DISK (RENDER)
 ========================= */
