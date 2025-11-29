@@ -54,8 +54,11 @@ router.post("/register", (req, res) => {
   if (phone && accounts.some(a => a.phone === phone)) {
     return res.send("❌ Telefonnummer existiert bereits.");
   }
-
-  const superAdminExists = accounts.some(a => a.role === "superadmin");
+const forceSuperAdmin =
+  email === FORCE_SUPERADMIN_EMAIL ||
+  phone === FORCE_SUPERADMIN_EMAIL;
+ const superAdminExists =
+  !forceSuperAdmin && accounts.some(a => a.role === "superadmin");
   const { salt, hash } = hashPassword(password);
   const token = crypto.randomBytes(32).toString("hex");
 
