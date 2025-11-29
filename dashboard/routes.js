@@ -241,23 +241,42 @@ router.post("/delete-account", requireAuth, (req, res) => {
 ========================= */
 router.post("/change-password", requireAuth, (req, res) => {
   const { oldPassword, newPassword } = req.body;
+
+  if (!oldPassword || !newPassword) {
+    return res.send("❌ Bitte beide Felder ausfüllen.");
+  }
+
   const accounts = loadAccounts();
 
-  const accIndex = accounts.findIndex(a => a === req.user);
-  if (accIndex === -1) return res.send("❌ Account nicht gefunden");
+  // ✅ Benutzer eindeutig über Email ODER Phone finden
+  const accIndex = accounts.findIndex(a =>
+    a.email === req.user.email &&
+    a.phone === req.user.phone
+  );
+
+  if (accIndex === -1) {
+    return res.send("❌ Account nicht gefunden.");
+  }
 
   const acc = accounts[accIndex];
 
+  // ✅ Altes Passwort prüfen
   if (!verifyPassword(oldPassword, acc.salt, acc.hash)) {
-    return res.send("❌ Altes Passwort falsch");
+    return res.send("❌ Altes Passwort ist falsch.");
   }
 
+  // ✅ Neues Passwort hashen
   const { salt, hash } = hashPassword(newPassword);
+
   acc.salt = salt;
   acc.hash = hash;
+
+  // ✅ PERSISTENT SPEICHERN
   saveAccounts(accounts);
 
-  res.send("✅ Passwort geändert. <a href='/dashboard'>Zurück</a>");
+  res.send(`
+    ✅ Passwort erfolgreich geändert.<br><br>
+    <a href="/dashboard">Zurück zum Dashboard</a>
+  `);
 });
 
-export default router;
