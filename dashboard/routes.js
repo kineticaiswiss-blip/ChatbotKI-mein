@@ -27,7 +27,7 @@ function togglePw(id){
 /* =========================
    REGISTER
 ========================= */
-router.get("/register", (req, res) => {
+router.get("/register",(req,res)=>{
   res.send(`
 <h1>Registrierung</h1>
 
@@ -38,11 +38,11 @@ Nachname <input name="lastName" required><br>
 Email <input name="email"><br>
 Telefon <input name="phone"><br><br>
 
-Passwort 
+Passwort
 <input type="password" id="pw1" name="password" required>
 <button type="button" onclick="togglePw('pw1')">👁</button><br>
 
-Passwort bestätigen 
+Passwort bestätigen
 <input type="password" id="pw2" name="password2" required>
 <button type="button" onclick="togglePw('pw2')">👁</button><br><br>
 
@@ -54,7 +54,7 @@ ${pwScript}
 `);
 });
 
-router.post("/register", (req, res) => {
+router.post("/register",(req,res)=>{
   const { firstName, lastName, email, phone, password, password2 } = req.body;
 
   if (!email && !phone)
@@ -89,7 +89,7 @@ router.post("/register", (req, res) => {
   });
 
   saveAccounts(accounts);
-  setCookie(res, "deviceToken", token, { httpOnly: true });
+  setCookie(res,"deviceToken",token,{ httpOnly:true });
 
   res.send(
     superAdminExists
@@ -101,14 +101,14 @@ router.post("/register", (req, res) => {
 /* =========================
    LOGIN
 ========================= */
-router.get("/login", (req, res) => {
+router.get("/login",(req,res)=>{
   res.send(`
 <h1>Login</h1>
 
 <form method="POST">
 Email oder Telefon <input name="identifier" required><br>
 
-Passwort 
+Passwort
 <input type="password" id="pwLogin" name="password" required>
 <button type="button" onclick="togglePw('pwLogin')">👁</button><br><br>
 
@@ -118,7 +118,7 @@ ${pwScript}
 `);
 });
 
-router.post("/login", (req, res) => {
+router.post("/login",(req,res)=>{
   const { identifier, password } = req.body;
   const accounts = loadAccounts();
 
@@ -136,15 +136,16 @@ router.post("/login", (req, res) => {
   acc.deviceTokens.push(token);
   saveAccounts(accounts);
 
-  setCookie(res, "deviceToken", token, { httpOnly: true });
+  setCookie(res,"deviceToken",token,{ httpOnly:true });
   res.redirect("/dashboard");
 });
 
 /* =========================
    DASHBOARD
 ========================= */
-router.get("/dashboard", requireAuth, (req, res) => {
+router.get("/dashboard", requireAuth, (req,res)=>{
   const accounts = loadAccounts();
+
   let html = `
 <h1>Dashboard</h1>
 <p>
@@ -152,18 +153,17 @@ ${req.user.firstName} (${req.user.role}) |
 <a href="/logout" style="color:red;font-weight:bold">Logout</a>
 </p>
 
-
 <h2>Passwort ändern</h2>
 <form method="POST" action="/change-password">
-Alt 
+Alt
 <input type="password" id="oldPw" name="oldPassword" required>
 <button type="button" onclick="togglePw('oldPw')">👁</button><br>
 
-Neu 
+Neu
 <input type="password" id="newPw1" name="newPassword" required>
 <button type="button" onclick="togglePw('newPw1')">👁</button><br>
 
-Neu bestätigen 
+Neu bestätigen
 <input type="password" id="newPw2" name="newPassword2" required>
 <button type="button" onclick="togglePw('newPw2')">👁</button><br><br>
 
@@ -174,7 +174,7 @@ ${pwScript}
 
   if (req.user.role !== "customer") {
     html += `<h2>Accounts</h2>`;
-    accounts.forEach((a, i) => {
+    accounts.forEach((a,i)=>{
       html += `
 <p>
 ${a.firstName} ${a.lastName} – ${a.role} – ${a.approved ? "✅" : "⛔"}
@@ -190,18 +190,16 @@ ${!a.approved ? `
 });
 
 /* =========================
-   CHANGE PASSWORD
+   CHANGE PASSWORD ✅ FIXED
 ========================= */
-router.post("/change-password", requireAuth, (req, res) => {
+router.post("/change-password", requireAuth, (req,res)=>{
   const { oldPassword, newPassword, newPassword2 } = req.body;
 
   if (newPassword !== newPassword2)
     return res.send("❌ Passwörter stimmen nicht überein.");
 
   const accounts = loadAccounts();
-  const acc = accounts.find(a =>
-    a.deviceTokens.includes(req.cookies?.deviceToken)
-  );
+  const acc = accounts.find(a => a.email === req.user.email);
 
   if (!acc) return res.send("❌ Account nicht gefunden");
 
@@ -211,23 +209,20 @@ router.post("/change-password", requireAuth, (req, res) => {
   const { salt, hash } = hashPassword(newPassword);
   acc.salt = salt;
   acc.hash = hash;
-  saveAccounts(accounts);
 
+  saveAccounts(accounts);
   res.send("✅ Passwort geändert. <a href='/dashboard'>Zurück</a>");
 });
+
 /* =========================
    LOGOUT
 ========================= */
-router.get("/logout", requireAuth, (req, res) => {
-  // Cookie löschen
+router.get("/logout",(req,res)=>{
   res.setHeader(
     "Set-Cookie",
     "deviceToken=; Path=/; HttpOnly; Max-Age=0; SameSite=Lax"
   );
-
-  res.send(`
-    ✅ Erfolgreich ausgeloggt.<br><br>
-    <a href="/login">Zum Login</a>
-  `);
+  res.redirect("/login");
 });
+
 export default router;
