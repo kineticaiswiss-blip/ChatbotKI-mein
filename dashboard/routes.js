@@ -212,5 +212,19 @@ router.post("/change-password", requireAuth, (req, res) => {
 
   res.send("✅ Passwort geändert. <a href='/dashboard'>Zurück</a>");
 });
+/* =========================
+   LOGOUT
+========================= */
+router.get("/logout", requireAuth, (req, res) => {
+  // Cookie löschen
+  res.setHeader(
+    "Set-Cookie",
+    "deviceToken=; Path=/; HttpOnly; Max-Age=0; SameSite=Lax"
+  );
 
+  res.send(`
+    ✅ Erfolgreich ausgeloggt.<br><br>
+    <a href="/login">Zum Login</a>
+  `);
+});
 export default router;
