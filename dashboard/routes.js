@@ -145,10 +145,13 @@ router.post("/login", (req, res) => {
 ========================= */
 router.get("/dashboard", requireAuth, (req, res) => {
   const accounts = loadAccounts();
-
   let html = `
 <h1>Dashboard</h1>
-<p>${req.user.firstName} (${req.user.role})</p>
+<p>
+${req.user.firstName} (${req.user.role}) |
+<a href="/logout" style="color:red;font-weight:bold">Logout</a>
+</p>
+
 
 <h2>Passwort ändern</h2>
 <form method="POST" action="/change-password">
