@@ -7,22 +7,16 @@ import path from "path";
    KONFIGURATION
 ========================= */
 
-// 👇 HIER DEINE TELEGRAM-ID EINTRAGEN
+// ✅ Telegram-Admin-IDs IMMER als STRING
 const SUPER_ADMIN_IDS = [
-  6369024996 // ← HIER DEINE ID
+  "6369024996"
 ];
 
-// Optional: Info-Datei
-const DATA_DIR = path.resolve("data");
+// ✅ ABSOLUTER & RENDER-SICHERER PFAD
+const DATA_DIR = path.join(process.cwd(), "data");
 const INFO_DIR = path.join(DATA_DIR, "bots_info");
 
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-}
-
-if (!fs.existsSync(INFO_DIR)) {
-  fs.mkdirSync(INFO_DIR, { recursive: true });
-}
+fs.mkdirSync(INFO_DIR, { recursive: true });
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
@@ -32,9 +26,9 @@ const openai = new OpenAI({
    BOT START
 ========================= */
 
-export function launchTelegramBot({ botId, token }) {
-  if (!token) {
-    console.log(`❌ Kein Token für Bot ${botId}`);
+export async function launchTelegramBot({ botId, token }) {
+  if (!botId || !token) {
+    console.log(`❌ Bot ${botId}: fehlende ID oder Token`);
     return;
   }
 
@@ -42,7 +36,11 @@ export function launchTelegramBot({ botId, token }) {
 
   const infoFile = path.join(INFO_DIR, `${botId}.txt`);
   if (!fs.existsSync(infoFile)) {
-    fs.writeFileSync(infoFile, "Firmeninfos:\n", "utf8");
+    fs.writeFileSync(
+      infoFile,
+      "Firmeninfos:\n",
+      "utf8"
+    );
   }
 
   bot.start(ctx => {
@@ -51,7 +49,7 @@ export function launchTelegramBot({ botId, token }) {
 
   bot.on("text", async ctx => {
     const text = ctx.message.text.trim();
-    const userId = ctx.from.id;
+    const userId = String(ctx.from.id);
     const isAdmin = SUPER_ADMIN_IDS.includes(userId);
 
     /* ===== ADMIN-BEFEHLE ===== */
@@ -66,14 +64,14 @@ export function launchTelegramBot({ botId, token }) {
 
       if (text.startsWith("/info ")) {
         const newInfo = text.replace("/info", "").trim();
-        fs.writeFileSync(infoFile, newInfo, "utf8");
-        return ctx.reply("✅ Firmeninfo aktualisiert.");
+        fs.writeFileSync(infoFile, newInfo + "\n", "utf8");
+        return ctx.reply("✅ Firmeninfo gespeichert.");
       }
 
       return ctx.reply("✅ Admin-Befehl erkannt.");
     }
 
-    /* ===== ALLE ANDEREN FRAGEN ===== */
+    /* ===== NORMALE FRAGEN (ALLES & JEDER) ===== */
     try {
       const info = fs.readFileSync(infoFile, "utf8");
 
@@ -83,21 +81,29 @@ export function launchTelegramBot({ botId, token }) {
           {
             role: "system",
             content:
-              "Du bist ein Firmenassistent. Nutze NUR diese Infos:\n" + info
+              "Du bist ein Firmenassistent. Antworte NUR basierend auf diesen Infos:\n" + info
           },
           { role: "user", content: text }
         ],
-        max_tokens: 300,
-        temperature: 0.2
+        temperature: 0.2,
+        max_tokens: 300
       });
 
-      ctx.reply(response.choices[0].message.content.trim());
+      const answer = response.choices?.[0]?.message?.content?.trim();
+      ctx.reply(answer || "🤔 Dazu habe ich leider keine Information.");
     } catch (err) {
-      console.error(err);
+      console.error("❌ OpenAI Fehler:", err);
       ctx.reply("⚠️ Fehler beim Antworten.");
     }
   });
 
-  bot.launch({ dropPendingUpdates: true });
-  console.log(`✅ Telegram-Bot gestartet: ${botId}`);
+  try {
+    // ✅ GANZ WICHTIG AUF RENDER
+    await bot.telegram.deleteWebhook();
+    await bot.launch({ dropPendingUpdates: true });
+
+    console.log(`✅ Telegram-Bot gestartet: ${botId}`);
+  } catch (err) {
+    console.error(`❌ Bot ${botId} konnte nicht gestartet werden`, err);
+  }
 }
