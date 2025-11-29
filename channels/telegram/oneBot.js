@@ -13,9 +13,16 @@ const SUPER_ADMIN_IDS = [
 ];
 
 // Optional: Info-Datei
-const DATA_DIR = process.env.DATA_DIR || "/mnt/data";
+const DATA_DIR = path.resolve("data");
 const INFO_DIR = path.join(DATA_DIR, "bots_info");
-if (!fs.existsSync(INFO_DIR)) fs.mkdirSync(INFO_DIR, { recursive: true });
+
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+
+if (!fs.existsSync(INFO_DIR)) {
+  fs.mkdirSync(INFO_DIR, { recursive: true });
+}
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
