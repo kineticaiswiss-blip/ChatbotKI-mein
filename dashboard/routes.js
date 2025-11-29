@@ -11,7 +11,7 @@ import {
 } from "./auth.js";
 
 const router = express.Router();
-
+export const FORCE_SUPERADMIN_EMAIL = "0774725182";
 /* =========================
    REGISTER
 ========================= */
