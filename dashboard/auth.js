@@ -1,3 +1,5 @@
+export const FORCE_SUPERADMIN_EMAIL = "robinschuepbach@gmx.ch";
+
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
