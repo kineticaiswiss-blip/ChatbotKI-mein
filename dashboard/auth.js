@@ -1,13 +1,18 @@
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
+
 /* =========================
-   PERSISTENTE DISK (RENDER)
+   RENDER PERSISTENT DISK
 ========================= */
-const DATA_DIR = "/var/data";
+const DATA_DIR = "/data";
 const ACCOUNTS_FILE = path.join(DATA_DIR, "accounts.json");
 
-// Disk existiert bereits → NICHT mkdir auf /var/data ausführen!
+// Disk & Datei erzwingen
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+
 if (!fs.existsSync(ACCOUNTS_FILE)) {
   fs.writeFileSync(ACCOUNTS_FILE, "[]", "utf8");
 }
@@ -28,7 +33,7 @@ export function saveAccounts(accounts) {
 }
 
 /* =========================
-   COOKIES
+   AUTH
 ========================= */
 export function parseCookies(req) {
   const h = req.headers?.cookie || "";
@@ -47,9 +52,6 @@ export function setCookie(res, name, value, opts = {}) {
   res.setHeader("Set-Cookie", c);
 }
 
-/* =========================
-   AUTH MIDDLEWARE
-========================= */
 export function requireAuth(req, res, next) {
   const token = parseCookies(req).deviceToken;
   if (!token) return res.redirect("/login");
