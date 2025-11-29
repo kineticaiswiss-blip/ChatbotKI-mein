@@ -8,9 +8,14 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // ✅ Persistent storage
-const DATA_DIR = process.env.DATA_DIR || "/mnt/data";
-fs.mkdirSync(DATA_DIR, { recursive: true });
-fs.mkdirSync(`${DATA_DIR}/bots_info`, { recursive: true });
+import fs from "fs";
+import path from "path";
+
+const DATA_DIR = path.resolve("data");
+
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+}
 
 // ✅ Routes
 app.use("/", dashboardRoutes);
