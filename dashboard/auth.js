@@ -2,24 +2,35 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 
+/* =========================
+   PERSISTENTE DISK (RENDER)
+========================= */
 const DATA_DIR = "/var/data";
 const ACCOUNTS_FILE = path.join(DATA_DIR, "accounts.json");
 
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-}
+// Disk existiert bereits → NICHT mkdir auf /var/data ausführen!
 if (!fs.existsSync(ACCOUNTS_FILE)) {
   fs.writeFileSync(ACCOUNTS_FILE, "[]", "utf8");
 }
 
+/* =========================
+   STORAGE
+========================= */
 export function loadAccounts() {
   return JSON.parse(fs.readFileSync(ACCOUNTS_FILE, "utf8"));
 }
 
 export function saveAccounts(accounts) {
-  fs.writeFileSync(ACCOUNTS_FILE, JSON.stringify(accounts, null, 2), "utf8");
+  fs.writeFileSync(
+    ACCOUNTS_FILE,
+    JSON.stringify(accounts, null, 2),
+    "utf8"
+  );
 }
 
+/* =========================
+   COOKIES
+========================= */
 export function parseCookies(req) {
   const h = req.headers?.cookie || "";
   const o = {};
@@ -37,6 +48,9 @@ export function setCookie(res, name, value, opts = {}) {
   res.setHeader("Set-Cookie", c);
 }
 
+/* =========================
+   AUTH MIDDLEWARE
+========================= */
 export function requireAuth(req, res, next) {
   const token = parseCookies(req).deviceToken;
   if (!token) return res.redirect("/login");
@@ -57,6 +71,9 @@ export function requireAdmin(req, res, next) {
   res.send("🚫 Nur Admins");
 }
 
+/* =========================
+   PASSWORDS
+========================= */
 export function hashPassword(pw, salt = null) {
   salt = salt || crypto.randomBytes(16).toString("hex");
   return {
