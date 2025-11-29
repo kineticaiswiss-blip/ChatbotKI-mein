@@ -17,66 +17,68 @@ const router = express.Router();
 ========================= */
 router.get("/register", (req, res) => {
   res.send(`
-<!DOCTYPE html>
-<html>
-<body>
-<h1>Registrierung</h1>
-<form method="POST">
-  Vorname <input name="firstName" required><br>
-  Nachname <input name="lastName" required><br>
-  Email <input name="email" type="email" required><br>
-  Passwort 
-  <input type="password" id="pwReg" name="password" required>
-  <button type="button" onclick="togglePw('pwReg')">👁</button><br>
-  <button>Registrieren</button>
-</form>
+  <h1>Registrierung</h1>
+  <form method="POST">
+    Vorname <input name="firstName" required><br>
+    Nachname <input name="lastName" required><br><br>
 
-<script>
-function togglePw(id){
-  const el=document.getElementById(id);
-  el.type = el.type==="password" ? "text" : "password";
-}
-</script>
-</body>
-</html>
-`);
+    Email <input name="email"><br>
+    ODER Telefon <input name="phone"><br><br>
+
+    Passwort <input type="password" name="password" required><br>
+    Passwort bestätigen <input type="password" name="password2" required><br><br>
+
+    <button>Registrieren</button>
+  </form>
+  <p>⚠️ Email ODER Telefonnummer ist erforderlich</p>
+  `);
 });
 
 router.post("/register", (req, res) => {
-  const accounts = loadAccounts();
+  const { firstName, lastName, email, phone, password, password2 } = req.body;
 
-  if (accounts.find(a => a.email === req.body.email)) {
-    return res.send("❌ Email existiert bereits");
+  if (!email && !phone) {
+    return res.send("❌ Email oder Telefonnummer erforderlich.");
   }
 
-  const isFirst = accounts.length === 0;
-  const { salt, hash } = hashPassword(req.body.password);
-  const deviceToken = crypto.randomBytes(32).toString("hex");
+  if (password !== password2) {
+    return res.send("❌ Passwörter stimmen nicht überein.");
+  }
+
+  const accounts = loadAccounts();
+
+  if (email && accounts.some(a => a.email === email)) {
+    return res.send("❌ Email existiert bereits.");
+  }
+
+  if (phone && accounts.some(a => a.phone === phone)) {
+    return res.send("❌ Telefonnummer existiert bereits.");
+  }
+
+  const superAdminExists = accounts.some(a => a.role === "superadmin");
+  const { salt, hash } = hashPassword(password);
+  const token = crypto.randomBytes(32).toString("hex");
 
   accounts.push({
-    firstName: req.body.firstName,
-    lastName: req.body.lastName,
-    email: req.body.email,
+    firstName,
+    lastName,
+    email: email || null,
+    phone: phone || null,
     salt,
     hash,
-    role: isFirst ? "superadmin" : "customer",
-    approved: isFirst,
-    deviceTokens: [deviceToken],
-    assignedBots: [],
-    telegramId: null
+    role: superAdminExists ? "customer" : "superadmin",
+    approved: !superAdminExists,
+    deviceTokens: [token],
+    assignedBots: []
   });
 
   saveAccounts(accounts);
-
-  setCookie(res, "deviceToken", deviceToken, {
-    httpOnly: true,
-    maxAge: 60 * 60 * 24 * 30
-  });
+  setCookie(res, "deviceToken", token, { httpOnly: true });
 
   res.send(
-    isFirst
+    !superAdminExists
       ? "✅ Superadmin erstellt. <a href='/dashboard'>Dashboard</a>"
-      : "✅ Registrierung erfolgreich. Warten auf Admin-Freigabe."
+      : "✅ Registriert – wartet auf Freigabe."
   );
 });
 
@@ -85,50 +87,36 @@ router.post("/register", (req, res) => {
 ========================= */
 router.get("/login", (req, res) => {
   res.send(`
-<!DOCTYPE html>
-<html>
-<body>
-<h1>Login</h1>
-<form method="POST">
-  Email <input name="email" type="email" required><br>
-  Passwort 
-  <input type="password" id="pwLogin" name="password" required>
-  <button type="button" onclick="togglePw('pwLogin')">👁</button><br>
-  <button>Login</button>
-</form>
-
-<script>
-function togglePw(id){
-  const el=document.getElementById(id);
-  el.type = el.type==="password" ? "text" : "password";
-}
-</script>
-</body>
-</html>
-`);
+  <h1>Login</h1>
+  <form method="POST">
+    Email oder Telefon <input name="identifier" required><br>
+    Passwort <input type="password" name="password" required><br><br>
+    <button>Login</button>
+  </form>
+  `);
 });
 
 router.post("/login", (req, res) => {
+  const { identifier, password } = req.body;
   const accounts = loadAccounts();
-  const acc = accounts.find(a => a.email === req.body.email);
 
-  if (!acc || !verifyPassword(req.body.password, acc.salt, acc.hash)) {
-    return res.send("❌ Email oder Passwort falsch");
+  const acc = accounts.find(
+    a => a.email === identifier || a.phone === identifier
+  );
+
+  if (!acc || !verifyPassword(password, acc.salt, acc.hash)) {
+    return res.send("❌ Login fehlgeschlagen.");
   }
 
   if (!acc.approved) {
-    return res.send("⛔ Account wartet auf Freigabe");
+    return res.send("⛔ Account noch nicht freigegeben.");
   }
 
   const token = crypto.randomBytes(32).toString("hex");
   acc.deviceTokens.push(token);
   saveAccounts(accounts);
 
-  setCookie(res, "deviceToken", token, {
-    httpOnly: true,
-    maxAge: 60 * 60 * 24 * 30
-  });
-
+  setCookie(res, "deviceToken", token, { httpOnly: true });
   res.redirect("/dashboard");
 });
 
@@ -146,7 +134,7 @@ router.get("/dashboard", requireAuth, (req, res) => {
 <p>${req.user.firstName} (${req.user.role})</p>
 
 <script>
-setInterval(()=>location.reload(),300000);
+setInterval(() => location.reload(), 300000);
 function togglePw(id){
   const el=document.getElementById(id);
   el.type = el.type==="password" ? "text" : "password";
@@ -158,7 +146,7 @@ function togglePw(id){
   Alt <input type="password" id="oldPw" name="oldPassword" required>
   <button type="button" onclick="togglePw('oldPw')">👁</button><br>
   Neu <input type="password" id="newPw" name="newPassword" required>
-  <button type="button" onclick="togglePw('newPw')">👁</button><br>
+  <button type="button" onclick="togglePw('newPw')">👁</button><br><br>
   <button>Speichern</button>
 </form>
 `;
@@ -168,14 +156,14 @@ function togglePw(id){
     accounts.forEach((a, i) => {
       html += `
 <p>
-${a.firstName} ${a.lastName} – ${a.email} – ${a.role} – ${a.approved ? "✅" : "⛔"}
+${a.firstName} ${a.lastName} – ${(a.email || a.phone)} – ${a.role} – ${a.approved ? "✅" : "⛔"}
 ${!a.approved ? `
 <a href="/approve/${i}/admin">Admin</a> |
 <a href="/approve/${i}/customer">Kunde</a>
 ` : ""}
 ${req.user.role === "superadmin" ? `
 <form method="POST" action="/delete-account" style="display:inline">
-  <input type="hidden" name="email" value="${a.email}">
+  <input type="hidden" name="idx" value="${i}">
   <button>🗑</button>
 </form>` : ""}
 </p>`;
@@ -192,7 +180,7 @@ ${req.user.role === "superadmin" ? `
 router.get("/approve/:idx/:role", requireAuth, requireAdmin, (req, res) => {
   const accounts = loadAccounts();
   const acc = accounts[req.params.idx];
-  if (!acc) return res.send("Nicht gefunden");
+  if (!acc) return res.send("❌ Nicht gefunden");
 
   acc.role = req.params.role;
   acc.approved = true;
@@ -206,11 +194,10 @@ router.post("/delete-account", requireAuth, (req, res) => {
     return res.send("🚫 Nur Superadmin");
   }
 
-  const accounts = loadAccounts().filter(
-    a => a.email !== req.body.email
-  );
-
+  const accounts = loadAccounts();
+  accounts.splice(req.body.idx, 1);
   saveAccounts(accounts);
+
   res.redirect("/dashboard");
 });
 
@@ -221,9 +208,7 @@ router.post("/change-password", requireAuth, (req, res) => {
   const { oldPassword, newPassword } = req.body;
   const accounts = loadAccounts();
 
-  const accIndex = accounts.findIndex(
-    a => a.email === req.user.email
-  );
+  const accIndex = accounts.findIndex(a => a === req.user);
   if (accIndex === -1) return res.send("❌ Account nicht gefunden");
 
   const acc = accounts[accIndex];
@@ -235,7 +220,6 @@ router.post("/change-password", requireAuth, (req, res) => {
   const { salt, hash } = hashPassword(newPassword);
   acc.salt = salt;
   acc.hash = hash;
-
   saveAccounts(accounts);
 
   res.send("✅ Passwort geändert. <a href='/dashboard'>Zurück</a>");
