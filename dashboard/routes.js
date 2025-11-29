@@ -27,7 +27,7 @@ function togglePw(id){
 /* =========================
    REGISTER
 ========================= */
-router.get("/register",(req,res)=>{
+router.get("/register", (req, res) => {
   res.send(`
 <h1>Registrierung</h1>
 
@@ -54,22 +54,26 @@ ${pwScript}
 `);
 });
 
-router.post("/register",(req,res)=>{
+router.post("/register", (req, res) => {
   const { firstName, lastName, email, phone, password, password2 } = req.body;
 
-  if (!email && !phone)
+  if (!email && !phone) {
     return res.send("❌ Email oder Telefonnummer erforderlich.");
+  }
 
-  if (password !== password2)
+  if (password !== password2) {
     return res.send("❌ Passwörter stimmen nicht überein.");
+  }
 
   const accounts = loadAccounts();
 
-  if (email && accounts.some(a => a.email === email))
+  if (email && accounts.some(a => a.email === email)) {
     return res.send("❌ Email existiert bereits.");
+  }
 
-  if (phone && accounts.some(a => a.phone === phone))
+  if (phone && accounts.some(a => a.phone === phone)) {
     return res.send("❌ Telefonnummer existiert bereits.");
+  }
 
   const superAdminExists = accounts.some(a => a.role === "superadmin");
   const { salt, hash } = hashPassword(password);
@@ -89,7 +93,7 @@ router.post("/register",(req,res)=>{
   });
 
   saveAccounts(accounts);
-  setCookie(res,"deviceToken",token,{ httpOnly:true });
+  setCookie(res, "deviceToken", token, { httpOnly: true });
 
   res.send(
     superAdminExists
@@ -101,7 +105,7 @@ router.post("/register",(req,res)=>{
 /* =========================
    LOGIN
 ========================= */
-router.get("/login",(req,res)=>{
+router.get("/login", (req, res) => {
   res.send(`
 <h1>Login</h1>
 
@@ -118,7 +122,7 @@ ${pwScript}
 `);
 });
 
-router.post("/login",(req,res)=>{
+router.post("/login", (req, res) => {
   const { identifier, password } = req.body;
   const accounts = loadAccounts();
 
@@ -126,24 +130,26 @@ router.post("/login",(req,res)=>{
     a => a.email === identifier || a.phone === identifier
   );
 
-  if (!acc || !verifyPassword(password, acc.salt, acc.hash))
+  if (!acc || !verifyPassword(password, acc.salt, acc.hash)) {
     return res.send("❌ Login fehlgeschlagen.");
+  }
 
-  if (!acc.approved)
+  if (!acc.approved) {
     return res.send("⛔ Account noch nicht freigegeben.");
+  }
 
   const token = crypto.randomBytes(32).toString("hex");
   acc.deviceTokens.push(token);
   saveAccounts(accounts);
 
-  setCookie(res,"deviceToken",token,{ httpOnly:true });
+  setCookie(res, "deviceToken", token, { httpOnly: true });
   res.redirect("/dashboard");
 });
 
 /* =========================
    DASHBOARD
 ========================= */
-router.get("/dashboard", requireAuth, (req,res)=>{
+router.get("/dashboard", requireAuth, (req, res) => {
   const accounts = loadAccounts();
 
   let html = `
@@ -174,7 +180,7 @@ ${pwScript}
 
   if (req.user.role !== "customer") {
     html += `<h2>Accounts</h2>`;
-    accounts.forEach((a,i)=>{
+    accounts.forEach((a, i) => {
       html += `
 <p>
 ${a.firstName} ${a.lastName} – ${a.role} – ${a.approved ? "✅" : "⛔"}
@@ -190,21 +196,51 @@ ${!a.approved ? `
 });
 
 /* =========================
-   CHANGE PASSWORD ✅ FIXED
+   ✅ APPROVE ROUTE (FEHLTE BEI DIR!)
 ========================= */
-router.post("/change-password", requireAuth, (req,res)=>{
+router.get(
+  "/approve/:idx/:role",
+  requireAuth,
+  requireAdmin,
+  (req, res) => {
+    const accounts = loadAccounts();
+    const idx = Number(req.params.idx);
+    const role = req.params.role;
+
+    if (!accounts[idx]) {
+      return res.send("❌ Account nicht gefunden");
+    }
+
+    if (!["admin", "customer"].includes(role)) {
+      return res.send("❌ Ungültige Rolle");
+    }
+
+    accounts[idx].role = role;
+    accounts[idx].approved = true;
+    saveAccounts(accounts);
+
+    res.redirect("/dashboard");
+  }
+);
+
+/* =========================
+   CHANGE PASSWORD
+========================= */
+router.post("/change-password", requireAuth, (req, res) => {
   const { oldPassword, newPassword, newPassword2 } = req.body;
 
-  if (newPassword !== newPassword2)
+  if (newPassword !== newPassword2) {
     return res.send("❌ Passwörter stimmen nicht überein.");
+  }
 
   const accounts = loadAccounts();
   const acc = accounts.find(a => a.email === req.user.email);
 
   if (!acc) return res.send("❌ Account nicht gefunden");
 
-  if (!verifyPassword(oldPassword, acc.salt, acc.hash))
+  if (!verifyPassword(oldPassword, acc.salt, acc.hash)) {
     return res.send("❌ Altes Passwort falsch");
+  }
 
   const { salt, hash } = hashPassword(newPassword);
   acc.salt = salt;
@@ -217,7 +253,7 @@ router.post("/change-password", requireAuth, (req,res)=>{
 /* =========================
    LOGOUT
 ========================= */
-router.get("/logout",(req,res)=>{
+router.get("/logout", (req, res) => {
   res.setHeader(
     "Set-Cookie",
     "deviceToken=; Path=/; HttpOnly; Max-Age=0; SameSite=Lax"
