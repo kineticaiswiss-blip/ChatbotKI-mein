@@ -6,6 +6,7 @@ import {
   requireAuth,
   requireAdmin,
   setCookie,
+  parseCookies,
   hashPassword,
   verifyPassword
 } from "./auth.js";
@@ -33,7 +34,7 @@ router.get("/register", (req, res) => {
 
 <form method="POST">
 Vorname <input name="firstName" required><br>
-Nachname <input name="lastName" required><br>
+Nachname <input name="lastName" required><br><br>
 
 Email <input name="email"><br>
 Telefon <input name="phone"><br><br>
@@ -89,7 +90,9 @@ router.post("/register", (req, res) => {
     role: superAdminExists ? "customer" : "superadmin",
     approved: !superAdminExists,
     deviceTokens: [token],
-    assignedBots: []
+    assignedBots: [],
+    forcePasswordReset: false,
+    resetToken: null
   });
 
   saveAccounts(accounts);
@@ -97,7 +100,7 @@ router.post("/register", (req, res) => {
 
   res.send(
     superAdminExists
-      ? "✅ Registriert – wartet auf Freigabe."
+      ? "✅ Registriert – wartet auf Freigabe durch Admin."
       : "✅ Superadmin erstellt. <a href='/dashboard'>Dashboard</a>"
   );
 });
@@ -110,7 +113,7 @@ router.get("/login", (req, res) => {
 <h1>Login</h1>
 
 <form method="POST">
-Email oder Telefon <input name="identifier" required><br>
+Email oder Telefon <input name="identifier" required><br><br>
 
 Passwort
 <input type="password" id="pwLogin" name="password" required>
@@ -136,6 +139,10 @@ router.post("/login", (req, res) => {
 
   if (!acc.approved) {
     return res.send("⛔ Account noch nicht freigegeben.");
+  }
+
+  if (acc.forcePasswordReset) {
+    return res.send("🔑 Passwort wurde zurückgesetzt – bitte neu setzen.");
   }
 
   const token = crypto.randomBytes(32).toString("hex");
@@ -184,9 +191,17 @@ ${pwScript}
       html += `
 <p>
 ${a.firstName} ${a.lastName} – ${a.role} – ${a.approved ? "✅" : "⛔"}
+
 ${!a.approved ? `
 <a href="/approve/${i}/admin">Admin</a> |
 <a href="/approve/${i}/customer">Kunde</a>
+` : ""}
+
+${req.user.role === "superadmin" ? `
+<form method="POST" action="/force-reset" style="display:inline">
+  <input type="hidden" name="idx" value="${i}">
+  <button style="color:red">🔑 Reset PW</button>
+</form>
 ` : ""}
 </p>`;
     });
@@ -196,35 +211,91 @@ ${!a.approved ? `
 });
 
 /* =========================
-   ✅ APPROVE ROUTE (FEHLTE BEI DIR!)
+   APPROVE
 ========================= */
-router.get(
-  "/approve/:idx/:role",
-  requireAuth,
-  requireAdmin,
-  (req, res) => {
-    const accounts = loadAccounts();
-    const idx = Number(req.params.idx);
-    const role = req.params.role;
+router.get("/approve/:idx/:role", requireAuth, requireAdmin, (req, res) => {
+  const accounts = loadAccounts();
+  const idx = Number(req.params.idx);
+  const role = req.params.role;
 
-    if (!accounts[idx]) {
-      return res.send("❌ Account nicht gefunden");
-    }
+  if (!accounts[idx]) return res.send("❌ Account nicht gefunden");
+  if (!["admin", "customer"].includes(role))
+    return res.send("❌ Ungültige Rolle");
 
-    if (!["admin", "customer"].includes(role)) {
-      return res.send("❌ Ungültige Rolle");
-    }
+  accounts[idx].role = role;
+  accounts[idx].approved = true;
+  saveAccounts(accounts);
 
-    accounts[idx].role = role;
-    accounts[idx].approved = true;
-    saveAccounts(accounts);
-
-    res.redirect("/dashboard");
-  }
-);
+  res.redirect("/dashboard");
+});
 
 /* =========================
-   CHANGE PASSWORD
+   FORCE PASSWORD RESET (SUPERADMIN)
+========================= */
+router.post("/force-reset", requireAuth, requireAdmin, (req, res) => {
+  if (req.user.role !== "superadmin") {
+    return res.send("🚫 Nur Superadmin");
+  }
+
+  const accounts = loadAccounts();
+  const idx = Number(req.body.idx);
+  if (!accounts[idx]) return res.send("❌ Account nicht gefunden");
+
+  const resetToken = crypto.randomBytes(32).toString("hex");
+
+  accounts[idx].forcePasswordReset = true;
+  accounts[idx].resetToken = resetToken;
+  accounts[idx].approved = false;
+  accounts[idx].deviceTokens = [];
+
+  saveAccounts(accounts);
+
+  res.send(`
+✅ Passwort erzwungen zurückgesetzt.<br><br>
+Reset-Link: <a href="/reset/${resetToken}">/reset/${resetToken}</a>
+`);
+});
+
+/* =========================
+   RESET PASSWORD LINK
+========================= */
+router.get("/reset/:token", (req, res) => {
+  const accounts = loadAccounts();
+  const acc = accounts.find(a => a.resetToken === req.params.token);
+  if (!acc) return res.send("❌ Ungültiger Token");
+
+  res.send(`
+<h1>Neues Passwort setzen</h1>
+<form method="POST">
+<input type="password" name="pw1" required placeholder="Neues Passwort"><br>
+<input type="password" name="pw2" required placeholder="Bestätigen"><br><br>
+<button>Speichern</button>
+</form>
+`);
+});
+
+router.post("/reset/:token", (req, res) => {
+  const { pw1, pw2 } = req.body;
+  if (pw1 !== pw2) return res.send("❌ Passwörter stimmen nicht überein");
+
+  const accounts = loadAccounts();
+  const acc = accounts.find(a => a.resetToken === req.params.token);
+  if (!acc) return res.send("❌ Ungültiger Token");
+
+  const { salt, hash } = hashPassword(pw1);
+  acc.salt = salt;
+  acc.hash = hash;
+  acc.forcePasswordReset = false;
+  acc.resetToken = null;
+  acc.approved = true;
+
+  saveAccounts(accounts);
+
+  res.send("✅ Passwort gesetzt. <a href='/login'>Login</a>");
+});
+
+/* =========================
+   CHANGE PASSWORD (NORMAL)
 ========================= */
 router.post("/change-password", requireAuth, (req, res) => {
   const { oldPassword, newPassword, newPassword2 } = req.body;
@@ -235,7 +306,6 @@ router.post("/change-password", requireAuth, (req, res) => {
 
   const accounts = loadAccounts();
   const acc = accounts.find(a => a.email === req.user.email);
-
   if (!acc) return res.send("❌ Account nicht gefunden");
 
   if (!verifyPassword(oldPassword, acc.salt, acc.hash)) {
@@ -245,8 +315,8 @@ router.post("/change-password", requireAuth, (req, res) => {
   const { salt, hash } = hashPassword(newPassword);
   acc.salt = salt;
   acc.hash = hash;
-
   saveAccounts(accounts);
+
   res.send("✅ Passwort geändert. <a href='/dashboard'>Zurück</a>");
 });
 
