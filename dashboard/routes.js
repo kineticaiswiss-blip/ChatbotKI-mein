@@ -14,7 +14,7 @@ import {
 const router = express.Router();
 
 /* =========================
-   HILFS-SCRIPT (PASSWORT AUGE)
+   HILFS-SCRIPT
 ========================= */
 const pwScript = `
 <script>
@@ -50,7 +50,7 @@ Passwort bestätigen
 <button>Registrieren</button>
 </form>
 
-<p>⚠️ Email ODER Telefonnummer ist erforderlich</p>
+<p>⚠️ Email ODER Telefonnummer erforderlich</p>
 ${pwScript}
 `);
 });
@@ -58,27 +58,22 @@ ${pwScript}
 router.post("/register", (req, res) => {
   const { firstName, lastName, email, phone, password, password2 } = req.body;
 
-  if (!email && !phone) {
+  if (!email && !phone)
     return res.send("❌ Email oder Telefonnummer erforderlich.");
-  }
 
-  if (password !== password2) {
+  if (password !== password2)
     return res.send("❌ Passwörter stimmen nicht überein.");
-  }
 
   const accounts = loadAccounts();
 
-  if (email && accounts.some(a => a.email === email)) {
+  if (email && accounts.some(a => a.email === email))
     return res.send("❌ Email existiert bereits.");
-  }
 
-  if (phone && accounts.some(a => a.phone === phone)) {
+  if (phone && accounts.some(a => a.phone === phone))
     return res.send("❌ Telefonnummer existiert bereits.");
-  }
 
-  const superAdminExists = accounts.some(a => a.role === "superadmin");
+  const isFirst = !accounts.some(a => a.role === "superadmin");
   const { salt, hash } = hashPassword(password);
-  const token = crypto.randomBytes(32).toString("hex");
 
   accounts.push({
     firstName,
@@ -87,21 +82,20 @@ router.post("/register", (req, res) => {
     phone: phone || null,
     salt,
     hash,
-    role: superAdminExists ? "customer" : "superadmin",
-    approved: !superAdminExists,
-    deviceTokens: [token],
+    role: isFirst ? "superadmin" : "customer",
+    approved: isFirst,
+    deviceTokens: [],
     assignedBots: [],
     forcePasswordReset: false,
     resetToken: null
   });
 
   saveAccounts(accounts);
-  setCookie(res, "deviceToken", token, { httpOnly: true });
 
   res.send(
-    superAdminExists
-      ? "✅ Registriert – wartet auf Freigabe durch Admin."
-      : "✅ Superadmin erstellt. <a href='/dashboard'>Dashboard</a>"
+    isFirst
+      ? "✅ Superadmin erstellt. <a href='/login'>Login</a>"
+      : "✅ Registriert – wartet auf Freigabe."
   );
 });
 
@@ -133,17 +127,14 @@ router.post("/login", (req, res) => {
     a => a.email === identifier || a.phone === identifier
   );
 
-  if (!acc || !verifyPassword(password, acc.salt, acc.hash)) {
+  if (!acc || !verifyPassword(password, acc.salt, acc.hash))
     return res.send("❌ Login fehlgeschlagen.");
-  }
 
-  if (!acc.approved) {
+  if (!acc.approved)
     return res.send("⛔ Account noch nicht freigegeben.");
-  }
 
-  if (acc.forcePasswordReset) {
-    return res.send("🔑 Passwort wurde zurückgesetzt – bitte neu setzen.");
-  }
+  if (acc.forcePasswordReset)
+    return res.send("🔑 Passwort-Reset erforderlich.");
 
   const token = crypto.randomBytes(32).toString("hex");
   acc.deviceTokens.push(token);
@@ -161,24 +152,22 @@ router.get("/dashboard", requireAuth, (req, res) => {
 
   let html = `
 <h1>Dashboard</h1>
+
 <p>
-${req.user.firstName} (${req.user.role}) |
-<a href="/logout" style="color:red;font-weight:bold">Logout</a>
+${req.user.firstName} (${req.user.role})
+| <a href="/logout" style="color:red">Logout</a>
 </p>
 
 <h2>Passwort ändern</h2>
 <form method="POST" action="/change-password">
-Alt
-<input type="password" id="oldPw" name="oldPassword" required>
-<button type="button" onclick="togglePw('oldPw')">👁</button><br>
+Alt <input type="password" id="opw" name="oldPassword" required>
+<button type="button" onclick="togglePw('opw')">👁</button><br>
 
-Neu
-<input type="password" id="newPw1" name="newPassword" required>
-<button type="button" onclick="togglePw('newPw1')">👁</button><br>
+Neu <input type="password" id="npw1" name="newPassword" required>
+<button type="button" onclick="togglePw('npw1')">👁</button><br>
 
-Neu bestätigen
-<input type="password" id="newPw2" name="newPassword2" required>
-<button type="button" onclick="togglePw('newPw2')">👁</button><br><br>
+Neu bestätigen <input type="password" id="npw2" name="newPassword2" required>
+<button type="button" onclick="togglePw('npw2')">👁</button><br><br>
 
 <button>Speichern</button>
 </form>
@@ -186,21 +175,23 @@ ${pwScript}
 `;
 
   if (req.user.role !== "customer") {
-    html += `<h2>Accounts</h2>`;
+    html += "<h2>Accounts</h2>";
     accounts.forEach((a, i) => {
+      const canReset = req.user.role === "superadmin" && a.email !== req.user.email;
+
       html += `
 <p>
-${a.firstName} ${a.lastName} – ${a.role} – ${a.approved ? "✅" : "⛔"}
+${a.firstName} ${a.lastName} (${a.role}) ${a.approved ? "✅" : "⛔"}
 
 ${!a.approved ? `
 <a href="/approve/${i}/admin">Admin</a> |
 <a href="/approve/${i}/customer">Kunde</a>
 ` : ""}
 
-${req.user.role === "superadmin" ? `
+${canReset ? `
 <form method="POST" action="/force-reset" style="display:inline">
   <input type="hidden" name="idx" value="${i}">
-  <button style="color:red">🔑 Reset PW</button>
+  <button>🔑 Reset PW</button>
 </form>
 ` : ""}
 </p>`;
@@ -230,48 +221,46 @@ router.get("/approve/:idx/:role", requireAuth, requireAdmin, (req, res) => {
 });
 
 /* =========================
-   FORCE PASSWORD RESET (SUPERADMIN)
+   FORCE PASSWORD RESET
 ========================= */
 router.post("/force-reset", requireAuth, requireAdmin, (req, res) => {
-  if (req.user.role !== "superadmin") {
+  if (req.user.role !== "superadmin")
     return res.send("🚫 Nur Superadmin");
-  }
 
   const accounts = loadAccounts();
   const idx = Number(req.body.idx);
   if (!accounts[idx]) return res.send("❌ Account nicht gefunden");
 
-  const resetToken = crypto.randomBytes(32).toString("hex");
+  const token = crypto.randomBytes(32).toString("hex");
 
   accounts[idx].forcePasswordReset = true;
-  accounts[idx].resetToken = resetToken;
+  accounts[idx].resetToken = token;
   accounts[idx].approved = false;
   accounts[idx].deviceTokens = [];
 
   saveAccounts(accounts);
 
   res.send(`
-✅ Passwort erzwungen zurückgesetzt.<br><br>
-Reset-Link: <a href="/reset/${resetToken}">/reset/${resetToken}</a>
-`);
+✅ Passwort zurückgesetzt.<br>
+<a href="/reset/${token}">Reset-Link</a>
+  `);
 });
 
 /* =========================
-   RESET PASSWORD LINK
+   RESET FLOW
 ========================= */
 router.get("/reset/:token", (req, res) => {
-  const accounts = loadAccounts();
-  const acc = accounts.find(a => a.resetToken === req.params.token);
+  const acc = loadAccounts().find(a => a.resetToken === req.params.token);
   if (!acc) return res.send("❌ Ungültiger Token");
 
   res.send(`
-<h1>Neues Passwort setzen</h1>
+<h1>Neues Passwort</h1>
 <form method="POST">
-<input type="password" name="pw1" required placeholder="Neues Passwort"><br>
-<input type="password" name="pw2" required placeholder="Bestätigen"><br><br>
+<input type="password" name="pw1" required><br>
+<input type="password" name="pw2" required><br><br>
 <button>Speichern</button>
 </form>
-`);
+  `);
 });
 
 router.post("/reset/:token", (req, res) => {
@@ -290,27 +279,27 @@ router.post("/reset/:token", (req, res) => {
   acc.approved = true;
 
   saveAccounts(accounts);
-
   res.send("✅ Passwort gesetzt. <a href='/login'>Login</a>");
 });
 
 /* =========================
-   CHANGE PASSWORD (NORMAL)
+   CHANGE PASSWORD
 ========================= */
 router.post("/change-password", requireAuth, (req, res) => {
   const { oldPassword, newPassword, newPassword2 } = req.body;
 
-  if (newPassword !== newPassword2) {
-    return res.send("❌ Passwörter stimmen nicht überein.");
-  }
+  if (newPassword !== newPassword2)
+    return res.send("❌ Passwörter stimmen nicht überein");
 
   const accounts = loadAccounts();
-  const acc = accounts.find(a => a.email === req.user.email);
+  const acc = accounts.find(a =>
+    a.deviceTokens.includes(parseCookies(req).deviceToken)
+  );
+
   if (!acc) return res.send("❌ Account nicht gefunden");
 
-  if (!verifyPassword(oldPassword, acc.salt, acc.hash)) {
-    return res.send("❌ Altes Passwort falsch");
-  }
+  if (!verifyPassword(oldPassword, acc.salt, acc.hash))
+    return res.send("❌ Falsches Passwort");
 
   const { salt, hash } = hashPassword(newPassword);
   acc.salt = salt;
