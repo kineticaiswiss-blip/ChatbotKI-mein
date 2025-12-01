@@ -52,6 +52,13 @@ button { margin: 4px; }
   <a href="/dashboard/account">Account</a>
   <a href="/dashboard/security">Sicherheit</a>
   <a href="/dashboard/bots">Bots</a>
+
+  ${
+    req.user.role !== "customer"
+      ? `<a href="/dashboard/admin">Admin</a>`
+      : ""
+  }
+
   <a href="/logout" style="color:red">Logout</a>
 </nav>
 <hr>
@@ -269,3 +276,74 @@ router.get("/logout",(req,res)=>{
 });
 
 export default router;
+/* =========================
+   ADMIN ÜBERSICHT
+========================= */
+router.get(
+  "/dashboard/admin",
+  requireAuth,
+  requireAdmin,
+  (req, res) => {
+    const accounts = loadAccounts();
+
+    let html = `<h2>Admin – Account Übersicht</h2>`;
+
+    accounts.forEach((a, i) => {
+      const isSelf =
+        (a.email && a.email === req.user.email) ||
+        (a.phone && a.phone === req.user.phone);
+
+      const canDelete =
+        req.user.role === "superadmin" ||
+        (req.user.role === "admin" && a.role === "customer");
+
+      const canReset =
+        req.user.role === "superadmin" && !isSelf;
+
+      html += `
+        <div style="border:1px solid #888;padding:10px;margin-bottom:8px;">
+          <b>${a.firstName} ${a.lastName}</b><br>
+          Rolle: ${a.role}<br>
+          Email: ${a.email || "-"}<br>
+          Telefon: ${a.phone || "-"}<br><br>
+
+          ${
+            !a.approved
+              ? "<span style='color:orange'>⛔ Nicht freigegeben</span><br><br>"
+              : ""
+          }
+
+          ${
+            canReset
+              ? `
+            <form method="POST" action="/force-reset" style="display:inline">
+              <input type="hidden" name="idx" value="${i}">
+              <button>🔑 Passwort resetten</button>
+            </form>
+            `
+              : ""
+          }
+
+          ${
+            canDelete
+              ? `
+            <form method="POST" action="/delete-account" style="display:inline">
+              <input type="hidden" name="idx" value="${i}">
+              <button style="color:red">🗑 Löschen</button>
+            </form>
+            `
+              : ""
+          }
+
+          ${
+            req.user.role === "superadmin"
+              ? `<button disabled>🤖 Bot zuweisen (kommt)</button>`
+              : ""
+          }
+        </div>
+      `;
+    });
+
+    res.send(dashboardLayout(req, html));
+  }
+);
