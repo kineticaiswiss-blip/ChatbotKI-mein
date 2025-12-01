@@ -14,7 +14,7 @@ import {
 const router = express.Router();
 
 /* =========================
-   GLOBAL HELPER
+   GLOBAL STYLE + HELFER
 ========================= */
 const baseStyle = (dark=false)=>`
 <style>
@@ -32,27 +32,21 @@ body {
   padding: 32px;
   border-radius: 12px;
 }
-h1,h2 { margin-top:0; }
-input,button {
-  width:100%;
-  padding:14px;
-  margin-top:8px;
-  font-size:16px;
-}
-button {
-  cursor:pointer;
-  border:none;
-  border-radius:6px;
-}
-button.primary { background:#4f46e5; color:white; }
-button.danger { background:#b91c1c;color:white; }
-.eye { margin-left:8px; }
 nav a {
   margin-right:16px;
   font-weight:600;
 }
+input,button {
+  width:100%;
+  padding:14px;
+  margin-top:10px;
+  font-size:16px;
+}
+button { border-radius:6px; border:none; cursor:pointer; }
+.primary { background:#4f46e5; color:white; }
+.danger { background:#b91c1c; color:white; }
 .card {
-  border:1px solid #4444;
+  border:1px solid #9994;
   padding:16px;
   border-radius:8px;
   margin-bottom:12px;
@@ -64,18 +58,17 @@ const pwScript = `
 <script>
 function togglePw(id){
   const el=document.getElementById(id);
-  el.type = el.type==="password" ? "text" : "password";
+  el.type = el.type === "password" ? "text" : "password";
 }
 </script>
 `;
 
-function dashboardLayout(req, content){
+function layout(req, content){
   return `
-<!doctype html>
-<html><head>
+<!doctype html><html><head>
 <meta charset="utf-8">
 <title>Dashboard</title>
-${baseStyle(req.user.darkMode)}
+${baseStyle(req.user?.darkMode)}
 </head>
 <body>
 
@@ -84,7 +77,7 @@ ${baseStyle(req.user.darkMode)}
   <a href="/dashboard/security">Sicherheit</a>
   <a href="/dashboard/bots">Bots</a>
   ${req.user.role !== "customer" ? `<a href="/dashboard/admin">Admin</a>` : ""}
-  <a href="/logout" style="color:#ef4444">Logout</a>
+  <a href="/logout" style="color:#e11d48">Logout</a>
 </nav>
 
 <div class="container">
@@ -99,55 +92,45 @@ ${content}
 ========================= */
 router.get("/register",(req,res)=>{
   res.send(`
-<!doctype html><html><head>
-${baseStyle()}
-</head><body>
-
+<!doctype html><html><head>${baseStyle()}</head><body>
 <div class="container">
 <h1>Registrierung</h1>
-
 <form method="POST">
 <input name="firstName" placeholder="Vorname" required>
 <input name="lastName" placeholder="Nachname" required>
-
 <input name="email" placeholder="Email">
 <input name="phone" placeholder="Telefon">
 
-<label>Passwort</label>
-<input type="password" id="pw1" name="password" required>
+<input type="password" id="pw1" name="password" placeholder="Passwort" required>
 <button type="button" onclick="togglePw('pw1')">👁</button>
 
-<label>Bestätigen</label>
-<input type="password" id="pw2" name="password2" required>
+<input type="password" id="pw2" name="password2" placeholder="Bestätigen" required>
 <button type="button" onclick="togglePw('pw2')">👁</button>
 
 <button class="primary">Registrieren</button>
 </form>
-
-<p style="margin-top:16px">Email ODER Telefonnummer erforderlich</p>
 </div>
-
 ${pwScript}
 </body></html>
 `);
 });
 
-/* === POST REGISTER BLEIBT LOGISCH GLEICH === */
 router.post("/register",(req,res)=>{
   const {firstName,lastName,email,phone,password,password2}=req.body;
   if(!email && !phone) return res.send("❌ Email oder Telefon nötig");
   if(password!==password2) return res.send("❌ Passwörter stimmen nicht");
 
   const accounts=loadAccounts();
-  if(email && accounts.some(a=>a.email===email))return res.send("❌ Email existiert");
-  if(phone && accounts.some(a=>a.phone===phone))return res.send("❌ Telefon existiert");
+  if(email && accounts.some(a=>a.email===email)) return res.send("❌ Email existiert");
+  if(phone && accounts.some(a=>a.phone===phone)) return res.send("❌ Telefon existiert");
 
   const isFirst=!accounts.some(a=>a.role==="superadmin");
   const {salt,hash}=hashPassword(password);
 
   accounts.push({
     firstName,lastName,
-    email:email||null, phone:phone||null,
+    email:email||null,
+    phone:phone||null,
     salt,hash,
     role:isFirst?"superadmin":"customer",
     approved:isFirst,
@@ -161,7 +144,7 @@ router.post("/register",(req,res)=>{
   saveAccounts(accounts);
   res.send(isFirst
     ? "✅ Superadmin erstellt. <a href='/login'>Login</a>"
-    : "✅ Registrierung erfolgreich – wartet auf Freigabe.");
+    : "✅ Registrierung – wartet auf Freigabe");
 });
 
 /* =========================
@@ -169,36 +152,30 @@ router.post("/register",(req,res)=>{
 ========================= */
 router.get("/login",(req,res)=>{
   res.send(`
-<!doctype html><html><head>
-${baseStyle()}
-</head><body>
-
+<!doctype html><html><head>${baseStyle()}</head><body>
 <div class="container">
 <h1>Login</h1>
 <form method="POST">
 <input name="identifier" placeholder="Email oder Telefon" required>
-
-<input type="password" id="pwLogin" name="password" required>
-<button type="button" onclick="togglePw('pwLogin')">👁</button>
-
+<input type="password" id="pw" name="password" placeholder="Passwort" required>
+<button type="button" onclick="togglePw('pw')">👁</button>
 <button class="primary">Login</button>
 </form>
 </div>
-
 ${pwScript}
 </body></html>
 `);
 });
 
-/* === LOGIN POST UNVERÄNDERT === */
 router.post("/login",(req,res)=>{
   const {identifier,password}=req.body;
   const accounts=loadAccounts();
   const acc=accounts.find(a=>a.email===identifier||a.phone===identifier);
+
   if(!acc||!verifyPassword(password,acc.salt,acc.hash))
     return res.send("❌ Login fehlgeschlagen");
-  if(!acc.approved)return res.send("⛔ Nicht freigegeben");
-  if(acc.forcePasswordReset)return res.send("🔑 Reset erforderlich");
+  if(!acc.approved) return res.send("⛔ Noch nicht freigegeben");
+  if(acc.forcePasswordReset) return res.send("🔑 Passwort zurücksetzen.");
 
   const token=crypto.randomBytes(32).toString("hex");
   acc.deviceTokens.push(token);
@@ -208,27 +185,143 @@ router.post("/login",(req,res)=>{
 });
 
 /* =========================
-   DASHBOARD ROUTES (ALLES BLEIBT)
+   DASHBOARD
 ========================= */
 router.get("/dashboard",(req,res)=>res.redirect("/dashboard/account"));
 
 router.get("/dashboard/account",requireAuth,(req,res)=>{
-  res.send(dashboardLayout(req,`
+  res.send(layout(req,`
 <h2>Account</h2>
 <p>${req.user.firstName} (${req.user.role})</p>
 <form method="POST" action="/dashboard/toggle-darkmode">
-<button>Darkmode wechseln</button>
+<button>🌙 Darkmode wechseln</button>
 </form>
 `));
 });
 
 router.post("/dashboard/toggle-darkmode",requireAuth,(req,res)=>{
-  const acc=loadAccounts().find(a=>a.email===req.user.email);
+  const accounts=loadAccounts();
+  const acc=accounts.find(a=>a.email===req.user.email);
   acc.darkMode=!acc.darkMode;
-  saveAccounts(loadAccounts());
+  saveAccounts(accounts);
   res.redirect("/dashboard/account");
 });
 
-/* === restlicher Code (Admin, Reset, Bots, Logout) BLEIBT IDENTISCH === */
+router.get("/dashboard/security",requireAuth,(req,res)=>{
+  res.send(layout(req,`
+<h2>Sicherheit</h2>
+<form method="POST" action="/change-password">
+<input type="password" id="o" name="oldPassword" placeholder="Alt" required>
+<button type="button" onclick="togglePw('o')">👁</button>
+<input type="password" id="n1" name="newPassword" placeholder="Neu" required>
+<button type="button" onclick="togglePw('n1')">👁</button>
+<input type="password" id="n2" name="newPassword2" placeholder="Bestätigen" required>
+<button type="button" onclick="togglePw('n2')">👁</button>
+<button class="primary">Speichern</button>
+</form>${pwScript}
+`));
+});
+
+router.post("/change-password",requireAuth,(req,res)=>{
+  const {oldPassword,newPassword,newPassword2}=req.body;
+  if(newPassword!==newPassword2) return res.send("❌");
+
+  const token=parseCookies(req).deviceToken;
+  const accounts=loadAccounts();
+  const acc=accounts.find(a=>a.deviceTokens.includes(token));
+  if(!verifyPassword(oldPassword,acc.salt,acc.hash)) return res.send("❌");
+
+  Object.assign(acc,hashPassword(newPassword));
+  saveAccounts(accounts);
+  res.redirect("/dashboard/security");
+});
+
+/* =========================
+   ADMIN ÜBERSICHT
+========================= */
+router.get("/dashboard/admin",requireAuth,requireAdmin,(req,res)=>{
+  const accounts=loadAccounts();
+  let html=`<h2>Admin Übersicht</h2>`;
+
+  accounts.forEach((a,i)=>{
+    const isSelf=a.email===req.user.email;
+    html+=`
+<div class="card">
+<b>${a.firstName} ${a.lastName}</b><br>
+Rolle: ${a.role}<br>
+Status: ${a.approved?"✅":"⛔"}<br>
+
+${!a.approved ? `
+<a href="/approve/${i}/customer">✅ Kunde</a>
+${req.user.role==="superadmin" ? `| <a href="/approve/${i}/admin">🛠 Admin</a>`:""}
+`:``}
+
+${req.user.role==="superadmin" && !isSelf ? `
+<form method="POST" action="/force-reset">
+<input type="hidden" name="idx" value="${i}">
+<button class="danger">Reset PW</button>
+</form>`:""}
+</div>`;
+  });
+
+  res.send(layout(req,html));
+});
+
+/* =========================
+   ADMIN ACTIONS
+========================= */
+router.get("/approve/:idx/:role",requireAuth,requireAdmin,(req,res)=>{
+  const accounts=loadAccounts();
+  const {idx,role}=req.params;
+  if(!accounts[idx]) return res.send("❌");
+  accounts[idx].role=role;
+  accounts[idx].approved=true;
+  saveAccounts(accounts);
+  res.redirect("/dashboard/admin");
+});
+
+router.post("/force-reset",requireAuth,(req,res)=>{
+  if(req.user.role!=="superadmin")return res.send("🚫");
+  const accounts=loadAccounts();
+  const acc=accounts[req.body.idx];
+  const token=crypto.randomBytes(32).toString("hex");
+  Object.assign(acc,{
+    forcePasswordReset:true,
+    resetToken:token,
+    approved:false,
+    deviceTokens:[]
+  });
+  saveAccounts(accounts);
+  res.send(`Reset-Link: <a href="/reset/${token}">${token}</a>`);
+});
+
+/* =========================
+   RESET + LOGOUT
+========================= */
+router.get("/reset/:t",(req,res)=>{
+  res.send(`<form method="POST">
+<input name="pw1" type="password">
+<input name="pw2" type="password">
+<button>Speichern</button>
+</form>`);
+});
+
+router.post("/reset/:t",(req,res)=>{
+  const accounts=loadAccounts();
+  const acc=accounts.find(a=>a.resetToken===req.params.t);
+  Object.assign(acc,{
+    ...hashPassword(req.body.pw1),
+    forcePasswordReset:false,
+    resetToken:null,
+    approved:true
+  });
+  saveAccounts(accounts);
+  res.redirect("/login");
+});
+
+router.get("/logout",(req,res)=>{
+  res.setHeader("Set-Cookie","deviceToken=; Path=/; Max-Age=0");
+  res.redirect("/login");
+});
 
 export default router;
