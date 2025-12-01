@@ -53,7 +53,34 @@ Passwort bestätigen
 ${pwScript}
 `);
 });
+function dashboardLayout(req, content) {
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Dashboard</title>
+<style>
+body { font-family: sans-serif; background:${req.user.darkMode ? "#111" : "#fff"}; color:${req.user.darkMode ? "#eee" : "#000"}; }
+a { margin-right: 10px; }
+</style>
+</head>
+<body>
 
+<nav>
+  <a href="/dashboard/account">Account</a>
+  <a href="/dashboard/security">Sicherheit</a>
+  <a href="/dashboard/bots">Bots</a>
+  <a href="/logout" style="color:red">Logout</a>
+</nav>
+<hr>
+
+${content}
+
+</body>
+</html>
+`;
+}
 router.post("/register",(req,res)=>{
   const { firstName, lastName, email, phone, password, password2 } = req.body;
 
