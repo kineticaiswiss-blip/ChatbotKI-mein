@@ -40,11 +40,7 @@ input,button{
   margin-top:10px;
   font-size:16px
 }
-button{
-  border:none;
-  border-radius:6px;
-  cursor:pointer
-}
+button{border:none;border-radius:6px;cursor:pointer}
 .primary{background:#4f46e5;color:white}
 .danger{background:#b91c1c;color:white}
 .card{
@@ -208,6 +204,9 @@ router.post("/dashboard/toggle-darkmode",requireAuth,(req,res)=>{
   res.redirect("/dashboard/account");
 });
 
+/* =========================
+   SICHERHEIT
+========================= */
 router.get("/dashboard/security",requireAuth,(req,res)=>{
 res.send(layout(req,`
 <h2>Sicherheit</h2>
@@ -239,43 +238,81 @@ router.post("/change-password",requireAuth,(req,res)=>{
 /* =========================
    BOTS
 ========================= */
-router.get("/dashboard/bots",requireAuth,(req,res)=>{
+router.get("/dashboard/bots", requireAuth, (req,res)=>{
   const bots=loadBots();
   const visible=req.user.role==="customer"
     ? bots.filter(b=>b.ownerEmail===req.user.email)
     : bots;
 
   let html="<h2>Bots</h2>";
+
   visible.forEach(b=>{
     html+=`
-    <div class="card">
-      <b>${b.name}</b><br>
-      ID: ${b.id}<br>
-      Besitzer: ${b.ownerEmail}
-    </div>`;
+<div class="card">
+<b>${b.name}</b><br>
+ID: ${b.id}<br>
+Besitzer: ${b.ownerEmail}<br>
+Token: ${b.token?"********":"nicht gesetzt"}<br>
+Status: ${b.active?"✅":"⛔"}<br>
+Telegram IDs: ${b.allowedTelegramIds?.join(", ")||"–"}
+
+${req.user.role!=="customer"?`
+<form method="POST" action="/dashboard/bots/update">
+<input type="hidden" name="id" value="${b.id}">
+<input name="token" placeholder="Bot Token" value="${b.token||""}">
+<label><input type="checkbox" name="active" ${b.active?"checked":""}> aktiv</label>
+<button class="primary">Speichern</button>
+</form>
+
+<form method="POST" action="/dashboard/bots/add-telegram">
+<input type="hidden" name="id" value="${b.id}">
+<input name="telegramId" placeholder="Telegram User ID">
+<button>Telegram ID hinzufügen</button>
+</form>
+`:""}
+</div>`;
   });
 
   if(req.user.role!=="customer"){
     html+=`
-    <h3>➕ Bot erstellen</h3>
-    <form method="POST">
-      <input name="name" placeholder="Bot Name" required>
-      <input name="ownerEmail" placeholder="Kunden Email" required>
-      <button class="primary">Erstellen</button>
-    </form>`;
+<h3>Bot erstellen</h3>
+<form method="POST" action="/dashboard/bots/create">
+<input name="name" placeholder="Name" required>
+<input name="ownerEmail" placeholder="Owner Email" required>
+<button class="primary">Erstellen</button>
+</form>`;
   }
 
   res.send(layout(req,html));
 });
 
-router.post("/dashboard/bots",requireAuth,requireAdmin,(req,res)=>{
-  const {name,ownerEmail}=req.body;
-  const accounts=loadAccounts();
-  const owner=accounts.find(a=>a.email===ownerEmail && a.role==="customer");
-  if(!owner) return res.send("❌ Ungültiger Kunde");
-
+router.post("/dashboard/bots/create",requireAuth,requireAdmin,(req,res)=>{
   const bots=loadBots();
-  bots.push(createBot(name,ownerEmail));
+  bots.push(createBot(req.body.name,req.body.ownerEmail));
+  saveBots(bots);
+  res.redirect("/dashboard/bots");
+});
+
+router.post("/dashboard/bots/update",requireAuth,requireAdmin,(req,res)=>{
+  const bots=loadBots();
+  const bot=bots.find(b=>b.id===req.body.id);
+  if(!bot) return res.send("❌");
+
+  bot.token=req.body.token||"";
+  bot.active=!!req.body.active;
+  saveBots(bots);
+  res.redirect("/dashboard/bots");
+});
+
+router.post("/dashboard/bots/add-telegram",requireAuth,requireAdmin,(req,res)=>{
+  const bots=loadBots();
+  const bot=bots.find(b=>b.id===req.body.id);
+  if(!bot) return res.send("❌");
+
+  bot.allowedTelegramIds ||= [];
+  if(!bot.allowedTelegramIds.includes(req.body.telegramId))
+    bot.allowedTelegramIds.push(req.body.telegramId);
+
   saveBots(bots);
   res.redirect("/dashboard/bots");
 });
@@ -288,25 +325,23 @@ router.get("/dashboard/admin",requireAuth,requireAdmin,(req,res)=>{
   let html="<h2>Admin Übersicht</h2>";
 
   accounts.forEach((a,i)=>{
-    const self=a.email===req.user.email;
     html+=`
-    <div class="card">
-      <b>${a.firstName} ${a.lastName}</b><br>
-      Rolle: ${a.role}<br>
-      Status: ${a.approved?"✅":"⛔"}<br>
+<div class="card">
+<b>${a.firstName} ${a.lastName}</b><br>
+Rolle: ${a.role}<br>
+Status: ${a.approved?"✅":"⛔"}<br>
 
-      ${!a.approved?`
-      <a href="/approve/${i}/customer">✅ Kunde</a>
-      ${req.user.role==="superadmin"
-        ?` | <a href="/approve/${i}/admin">🛠 Admin</a>`:""}
-      `:""}
+${!a.approved?`
+<a href="/approve/${i}/customer">Kunde</a>
+${req.user.role==="superadmin"?` | <a href="/approve/${i}/admin">Admin</a>`:""}
+`:""}
 
-      ${req.user.role==="superadmin"&&!self?`
-      <form method="POST" action="/force-reset">
-        <input type="hidden" name="idx" value="${i}">
-        <button class="danger">Reset PW</button>
-      </form>`:""}
-    </div>`;
+${req.user.role==="superadmin"&&a.email!==req.user.email?`
+<form method="POST" action="/force-reset">
+<input type="hidden" name="idx" value="${i}">
+<button class="danger">Reset PW</button>
+</form>`:""}
+</div>`;
   });
 
   res.send(layout(req,html));
@@ -314,17 +349,14 @@ router.get("/dashboard/admin",requireAuth,requireAdmin,(req,res)=>{
 
 router.get("/approve/:idx/:role",requireAuth,requireAdmin,(req,res)=>{
   const accounts=loadAccounts();
-  const idx=Number(req.params.idx);
-  const role=req.params.role;
+  const acc=accounts[req.params.idx];
+  if(!acc) return res.send("❌");
 
-  if(!accounts[idx]) return res.send("❌");
-  if(!["customer","admin"].includes(role)) return res.send("❌");
-
-  if(role==="admin" && req.user.role!=="superadmin")
+  if(req.params.role==="admin" && req.user.role!=="superadmin")
     return res.send("🚫");
 
-  accounts[idx].role=role;
-  accounts[idx].approved=true;
+  acc.role=req.params.role;
+  acc.approved=true;
   saveAccounts(accounts);
   res.redirect("/dashboard/admin");
 });
@@ -333,17 +365,16 @@ router.post("/force-reset",requireAuth,(req,res)=>{
   if(req.user.role!=="superadmin") return res.send("🚫");
   const accounts=loadAccounts();
   const acc=accounts[req.body.idx];
-  if(acc.email===req.user.email) return res.send("❌");
 
-  const token=crypto.randomBytes(32).toString("hex");
   Object.assign(acc,{
     forcePasswordReset:true,
-    resetToken:token,
+    resetToken:crypto.randomBytes(32).toString("hex"),
     approved:false,
     deviceTokens:[]
   });
+
   saveAccounts(accounts);
-  res.send(`Reset-Link: <a href="/reset/${token}">${token}</a>`);
+  res.send(`✅ Reset-Link erstellt`);
 });
 
 /* =========================
@@ -360,8 +391,7 @@ res.send(`<form method="POST">
 router.post("/reset/:t",(req,res)=>{
   const accounts=loadAccounts();
   const acc=accounts.find(a=>a.resetToken===req.params.t);
-  Object.assign(acc,{
-    ...hashPassword(req.body.pw1),
+  Object.assign(acc,hashPassword(req.body.pw1),{
     forcePasswordReset:false,
     resetToken:null,
     approved:true
