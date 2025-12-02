@@ -1,23 +1,33 @@
+// dashboard/bots.js
 import fs from "fs";
-const PATH = "/var/data/bots.json";
+import path from "path";
+
+const DATA_DIR = "/var/data";            // gleich wie in auth.js
+const BOTS_FILE = path.join(DATA_DIR, "bots.json");
+
+// Datei sicherstellen
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+if (!fs.existsSync(BOTS_FILE)) {
+  fs.writeFileSync(BOTS_FILE, "[]", "utf8");
+}
 
 export function loadBots() {
-  if (!fs.existsSync(PATH)) return [];
-  return JSON.parse(fs.readFileSync(PATH,"utf8"));
+  return JSON.parse(fs.readFileSync(BOTS_FILE, "utf8"));
 }
 
 export function saveBots(bots) {
-  fs.writeFileSync(PATH, JSON.stringify(bots,null,2));
+  fs.writeFileSync(BOTS_FILE, JSON.stringify(bots, null, 2), "utf8");
 }
 
-export function createBot(name, ownerEmail, platform="telegram") {
+export function createBot(name, ownerEmail) {
   return {
-    id: "bot_" + Date.now(),
+    id: name.toLowerCase().replace(/\s+/g, "-") + "-" + Date.now(),
     name,
+    token: "",                 // wird im Dashboard eingetragen
     ownerEmail,
-    platform,
-    tokenEncrypted: null,
-    active: false,
-    createdAt: new Date().toISOString()
+    allowedTelegramIds: [],    // hier tragen wir Telegram-IDs ein
+    active: true
   };
 }
