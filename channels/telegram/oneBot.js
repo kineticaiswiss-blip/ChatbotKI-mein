@@ -3,7 +3,7 @@ import OpenAI from "openai";
 import fs from "fs";
 import path from "path";
 
-// ✅ EINZIGER Import – NICHT doppelt!
+// ✅ EINZIGER korrekter Import
 import { loadBots } from "../../dashboard/bots.js";
 
 /* =========================
@@ -25,6 +25,11 @@ const openai = new OpenAI({
 });
 
 /* =========================
+   LAUFENDE BOTS (Registry)
+========================= */
+const runningBots = new Map();
+
+/* =========================
    EINEN BOT STARTEN
 ========================= */
 async function launchBot(botConfig) {
@@ -35,8 +40,16 @@ async function launchBot(botConfig) {
     return;
   }
 
-  console.log(`🟢 Starte Bot ${id}`);
+  // 🛑 Stoppe alten Bot falls vorhanden
+  if (runningBots.has(id)) {
+    try {
+      await runningBots.get(id).stop();
+      console.log(`🛑 Bot ${id} gestoppt`);
+    } catch {}
+    runningBots.delete(id);
+  }
 
+  console.log(`🟢 Starte Bot ${id}`);
   const bot = new Telegraf(token);
 
   const infoFile = path.join(INFO_DIR, `${id}.txt`);
@@ -51,11 +64,7 @@ async function launchBot(botConfig) {
   bot.on("text", async ctx => {
     const userId = String(ctx.from.id);
 
-    // 🔒 OPTIONAL: Telegram-ID Einschränkung
-    if (
-      allowedTelegramIds.length > 0 &&
-      !allowedTelegramIds.includes(userId)
-    ) {
+    if (allowedTelegramIds.length && !allowedTelegramIds.includes(userId)) {
       ctx.reply("🚫 Du bist für diesen Bot nicht freigeschaltet.");
       return;
     }
@@ -66,12 +75,7 @@ async function launchBot(botConfig) {
       const result = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [
-          {
-            role: "system",
-            content:
-              "Du bist ein Firmenassistent. Antworte NUR basierend auf diesen Infos:\n" +
-              info
-          },
+          { role: "system", content: "Antworte nur anhand dieser Infos:\n" + info },
           { role: "user", content: ctx.message.text }
         ],
         temperature: 0.2,
@@ -79,36 +83,43 @@ async function launchBot(botConfig) {
       });
 
       const answer = result.choices?.[0]?.message?.content?.trim();
-      ctx.reply(answer || "🤔 Dazu habe ich leider keine Information.");
+      ctx.reply(answer || "🤔 Dazu habe ich keine Information.");
     } catch (err) {
       console.error(`❌ OpenAI Fehler (${id}):`, err);
       ctx.reply("⚠️ Fehler beim Antworten.");
     }
   });
 
-  try {
-    await bot.telegram.deleteWebhook();
-    await bot.launch({ dropPendingUpdates: true });
-    console.log(`✅ Telegram-Bot gestartet: ${id}`);
-  } catch (err) {
-    console.error(`❌ Bot ${id} konnte nicht gestartet werden`, err);
-  }
+  await bot.telegram.deleteWebhook();
+  await bot.launch({ dropPendingUpdates: true });
+
+  runningBots.set(id, bot);
+  console.log(`✅ Telegram-Bot gestartet: ${id}`);
 }
 
 /* =========================
    ALLE AKTIVEN BOTS STARTEN
 ========================= */
 export async function startTelegramBots() {
-  const bots = loadBots().filter(b => b.active && b.token);
+  const bots = loadBots();
 
-  if (!bots.length) {
-    console.log("ℹ️ Keine aktiven Bots mit Token gefunden.");
-    return;
+  console.log(`🔄 Bot-Reload: ${bots.length} Config(s)`);
+
+  // 🧹 Stoppe Bots die nicht mehr aktiv sind
+  for (const [id, bot] of runningBots.entries()) {
+    if (!bots.find(b => b.id === id && b.active && b.token)) {
+      try {
+        await bot.stop();
+        console.log(`🛑 Bot ${id} gestoppt (nicht mehr aktiv)`);
+      } catch {}
+      runningBots.delete(id);
+    }
   }
 
-  console.log(`🚀 Starte ${bots.length} Telegram-Bot(s)...`);
+  const active = bots.filter(b => b.active && b.token);
+  console.log(`🚀 Starte ${active.length} Telegram-Bot(s)...`);
 
-  for (const bot of bots) {
+  for (const bot of active) {
     await launchBot(bot);
   }
 }
