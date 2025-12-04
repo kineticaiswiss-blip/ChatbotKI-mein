@@ -2,7 +2,7 @@ import { Telegraf } from "telegraf";
 import OpenAI from "openai";
 import fs from "fs";
 import path from "path";
-import { loadBots } from "../../bots.js";
+import { loadBots } from "../../dashboard/bots.js";
 
 /* =========================
    PERSISTENTE DISK (Render)
