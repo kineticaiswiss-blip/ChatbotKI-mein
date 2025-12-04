@@ -152,3 +152,26 @@ export async function startTelegramBots() {
     }
   }
 }
+import { loadBots } from "../../dashboard/bots.js";
+
+export async function startTelegramBots(){
+  const bots = loadBots();
+
+  const activeBots = bots.filter(
+    b => b.active && b.token
+  );
+
+  if (!activeBots.length) {
+    console.log("ℹ️ Keine aktiven Bots mit Token in bots.json gefunden.");
+    return;
+  }
+
+  console.log(`🚀 Starte ${activeBots.length} Telegram-Bot(s)...`);
+
+  for (const bot of activeBots) {
+    await launchTelegramBot({
+      botId: bot.id,
+      token: bot.token
+    });
+  }
+}
