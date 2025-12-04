@@ -30,6 +30,8 @@ const openai = new OpenAI({
 async function launchBot(botConfig) {
   const { id, token, allowedTelegramIds = [] } = botConfig;
 
+  console.log("🟢 Versuche Bot zu starten:", id);
+
   if (!token) {
     console.log(`⛔ Bot ${id}: kein Token`);
     return;
@@ -37,18 +39,27 @@ async function launchBot(botConfig) {
 
   const bot = new Telegraf(token);
 
-  const infoFile = path.join(INFO_DIR, `${id}.txt`);
-  if (!fs.existsSync(infoFile)) {
-    fs.writeFileSync(infoFile, "Firmeninfos:\n", "utf8");
+  try {
+    await bot.telegram.deleteWebhook();
+    console.log("✅ Webhook gelöscht für", id);
+  } catch (e) {
+    console.log("⚠️ Webhook-Löschung fehlgeschlagen für", id, e.message);
   }
 
   bot.start(ctx => {
-    ctx.reply("👋 Bot ist online. Schreib mir einfach.");
+    console.log("📩 /start von", ctx.from.id, "für Bot", id);
+    ctx.reply("👋 Bot ist online.");
   });
 
-  bot.on("text", async ctx => {
-    const userId = String(ctx.from.id);
+  bot.on("text", ctx => {
+    console.log("📨 Message von", ctx.from.id, "für Bot", id);
+    ctx.reply("✅ Nachricht erhalten");
+  });
 
+  await bot.launch({ dropPendingUpdates: true });
+
+  console.log(`✅ Telegram-Bot gestartet: ${id}`);
+}
     // 🔒 Telegram-ID Einschränkung (optional)
     if (allowedTelegramIds.length && !allowedTelegramIds.includes(userId)) {
       return ctx.reply("🚫 Du bist für diesen Bot nicht freigeschaltet.");
