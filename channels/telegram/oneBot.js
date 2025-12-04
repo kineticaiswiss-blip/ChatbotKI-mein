@@ -3,6 +3,8 @@ import OpenAI from "openai";
 import fs from "fs";
 import path from "path";
 import { loadBots } from "../../dashboard/bots.js";
+// oder
+import { loadBots } from "../bots.js";
 
 /* =========================
    PERSISTENTE DISK (Render)
@@ -76,6 +78,10 @@ async function launchBot(botConfig) {
 /* =========================
    START ALLER BOTS
 ========================= */
+console.log("🧪 startTelegramBots() gestartet");
+const bots = loadBots();
+console.log("🧪 bots.json Inhalt:", bots);
+
 export async function startTelegramBots() {
   const bots = loadBots().filter(b => b.active && b.token);
 
