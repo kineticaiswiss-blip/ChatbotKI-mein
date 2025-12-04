@@ -3,7 +3,7 @@ import OpenAI from "openai";
 import fs from "fs";
 import path from "path";
 
-// ✅ EINZIGER, korrekter Import
+// ✅ EINZIGER Import – NICHT doppelt!
 import { loadBots } from "../../dashboard/bots.js";
 
 /* =========================
@@ -25,44 +25,39 @@ const openai = new OpenAI({
 });
 
 /* =========================
-   BOT START (EIN BOT)
+   EINEN BOT STARTEN
 ========================= */
 async function launchBot(botConfig) {
   const { id, token, allowedTelegramIds = [] } = botConfig;
 
-  console.log("🟢 Versuche Bot zu starten:", id);
-
   if (!token) {
-    console.log(`⛔ Bot ${id}: kein Token`);
+    console.log(`⛔ Bot ${id} übersprungen – kein Token`);
     return;
   }
 
+  console.log(`🟢 Starte Bot ${id}`);
+
   const bot = new Telegraf(token);
 
-  try {
-    await bot.telegram.deleteWebhook();
-    console.log("✅ Webhook gelöscht für", id);
-  } catch (e) {
-    console.log("⚠️ Webhook-Löschung fehlgeschlagen für", id, e.message);
+  const infoFile = path.join(INFO_DIR, `${id}.txt`);
+  if (!fs.existsSync(infoFile)) {
+    fs.writeFileSync(infoFile, "Firmeninfos:\n", "utf8");
   }
 
   bot.start(ctx => {
-    console.log("📩 /start von", ctx.from.id, "für Bot", id);
-    ctx.reply("👋 Bot ist online.");
+    ctx.reply("👋 Bot ist online. Schreib mir einfach.");
   });
 
-  bot.on("text", ctx => {
-    console.log("📨 Message von", ctx.from.id, "für Bot", id);
-    ctx.reply("✅ Nachricht erhalten");
-  });
+  bot.on("text", async ctx => {
+    const userId = String(ctx.from.id);
 
-  await bot.launch({ dropPendingUpdates: true });
-
-  console.log(`✅ Telegram-Bot gestartet: ${id}`);
-}
-    // 🔒 Telegram-ID Einschränkung (optional)
-    if (allowedTelegramIds.length && !allowedTelegramIds.includes(userId)) {
-      return ctx.reply("🚫 Du bist für diesen Bot nicht freigeschaltet.");
+    // 🔒 OPTIONAL: Telegram-ID Einschränkung
+    if (
+      allowedTelegramIds.length > 0 &&
+      !allowedTelegramIds.includes(userId)
+    ) {
+      ctx.reply("🚫 Du bist für diesen Bot nicht freigeschaltet.");
+      return;
     }
 
     try {
@@ -80,13 +75,13 @@ async function launchBot(botConfig) {
           { role: "user", content: ctx.message.text }
         ],
         temperature: 0.2,
-        max_tokens: 300
+        max_tokens: 350
       });
 
       const answer = result.choices?.[0]?.message?.content?.trim();
-      ctx.reply(answer || "🤔 Dazu habe ich keine Information.");
+      ctx.reply(answer || "🤔 Dazu habe ich leider keine Information.");
     } catch (err) {
-      console.error("❌ OpenAI Fehler:", err);
+      console.error(`❌ OpenAI Fehler (${id}):`, err);
       ctx.reply("⚠️ Fehler beim Antworten.");
     }
   });
@@ -96,12 +91,12 @@ async function launchBot(botConfig) {
     await bot.launch({ dropPendingUpdates: true });
     console.log(`✅ Telegram-Bot gestartet: ${id}`);
   } catch (err) {
-    console.error(`❌ Bot ${id} Start fehlgeschlagen`, err);
+    console.error(`❌ Bot ${id} konnte nicht gestartet werden`, err);
   }
 }
 
 /* =========================
-   START ALLER BOTS
+   ALLE AKTIVEN BOTS STARTEN
 ========================= */
 export async function startTelegramBots() {
   const bots = loadBots().filter(b => b.active && b.token);
