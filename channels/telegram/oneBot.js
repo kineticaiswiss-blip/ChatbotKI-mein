@@ -2,44 +2,30 @@ import { Telegraf } from "telegraf";
 import OpenAI from "openai";
 import fs from "fs";
 import path from "path";
+import { loadBots } from "../../dashboard/bots.js";
 
 /* =========================
-   PERSISTENTE DISK
-   -> gleiche Disk wie Accounts: /var/data
+   DISK (RENDER-KOMPATIBEL)
 ========================= */
-const DATA_DIR = "/var/data";                 // WICHTIG: NICHT /data
+const DATA_DIR = "/var/data";
 const INFO_DIR = path.join(DATA_DIR, "bots_info");
-const BOTS_FILE = path.join(DATA_DIR, "bots.json");
 
-// Ordner für Bot-Infos sicherstellen
 if (!fs.existsSync(INFO_DIR)) {
-  try {
-    fs.mkdirSync(INFO_DIR, { recursive: true });
-    console.log("✅ INFO_DIR angelegt:", INFO_DIR);
-  } catch (err) {
-    console.error("❌ Konnte INFO_DIR nicht anlegen:", err);
-  }
+  fs.mkdirSync(INFO_DIR, { recursive: true });
+  console.log("✅ INFO_DIR angelegt:", INFO_DIR);
 }
 
 /* =========================
-   TELEGRAM ADMIN IDs
-========================= */
-// hier deine Telegram-User-IDs als STRING
-const SUPER_ADMIN_IDS = [
-  "6369024996"
-];
-
-/* =========================
-   OPENAI CLIENT
+   OPENAI
 ========================= */
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
 /* =========================
-   SINGLE BOT START
+   EINZELNEN BOT STARTEN
 ========================= */
-export async function launchTelegramBot({ id: botId, token }) {
+export async function launchTelegramBot({ botId, token, allowedTelegramIds = [] }) {
   if (!botId || !token) {
     console.log(`❌ Bot ${botId}: fehlende ID oder Token`);
     return;
@@ -49,21 +35,22 @@ export async function launchTelegramBot({ id: botId, token }) {
 
   const infoFile = path.join(INFO_DIR, `${botId}.txt`);
   if (!fs.existsSync(infoFile)) {
-    fs.writeFileSync(infoFile, "Firmeninfos:\n", "utf8");
+    fs.writeFileSync(infoFile, "Firmeninformationen:\n", "utf8");
   }
 
-  // /start
   bot.start(ctx => {
-    ctx.reply("👋 Bot ist online. Schreib mir einfach deine Frage.");
+    ctx.reply("👋 Bot ist online. Schreib mir einfach.");
   });
 
-  // alle Text-Nachrichten
   bot.on("text", async ctx => {
     const text = ctx.message.text.trim();
     const userId = String(ctx.from.id);
-    const isAdmin = SUPER_ADMIN_IDS.includes(userId);
 
-    // ---- ADMIN-BEFEHLE ----
+    const isAdmin =
+      Array.isArray(allowedTelegramIds) &&
+      allowedTelegramIds.includes(userId);
+
+    /* ===== ADMIN BEFEHLE ===== */
     if (text.startsWith("/")) {
       if (!isAdmin) {
         return ctx.reply("🚫 Dieser Befehl ist nur für Admins.");
@@ -82,7 +69,7 @@ export async function launchTelegramBot({ id: botId, token }) {
       return ctx.reply("✅ Admin-Befehl erkannt.");
     }
 
-    // ---- normale User-Fragen ----
+    /* ===== KI-ANTWORT (ALLE USER) ===== */
     try {
       const info = fs.readFileSync(infoFile, "utf8");
 
@@ -92,7 +79,7 @@ export async function launchTelegramBot({ id: botId, token }) {
           {
             role: "system",
             content:
-              "Du bist ein Firmenassistent. Antworte freundlich und präzise NUR basierend auf diesen Infos:\n" +
+              "Du bist ein Firmenassistent. Antworte NUR basierend auf diesen Infos:\n" +
               info
           },
           { role: "user", content: text }
@@ -101,7 +88,9 @@ export async function launchTelegramBot({ id: botId, token }) {
         max_tokens: 300
       });
 
-      const answer = response.choices?.[0]?.message?.content?.trim();
+      const answer =
+        response.choices?.[0]?.message?.content?.trim();
+
       ctx.reply(answer || "🤔 Dazu habe ich leider keine Information.");
     } catch (err) {
       console.error("❌ OpenAI Fehler:", err);
@@ -109,7 +98,6 @@ export async function launchTelegramBot({ id: botId, token }) {
     }
   });
 
-  // Bot starten
   try {
     await bot.telegram.deleteWebhook();
     await bot.launch({ dropPendingUpdates: true });
@@ -120,41 +108,9 @@ export async function launchTelegramBot({ id: botId, token }) {
 }
 
 /* =========================
-   ALLE BOTS AUS bots.json STARTEN
+   ALLE AKTIVEN BOTS STARTEN
 ========================= */
-function loadBotsFromDisk() {
-  try {
-    if (!fs.existsSync(BOTS_FILE)) return [];
-    const raw = fs.readFileSync(BOTS_FILE, "utf8");
-    return JSON.parse(raw);
-  } catch (err) {
-    console.error("❌ Konnte bots.json nicht lesen:", err);
-    return [];
-  }
-}
-
 export async function startTelegramBots() {
-  const bots = loadBotsFromDisk();
-
-  const activeBots = bots.filter(b => b.active && b.token);
-  if (!activeBots.length) {
-    console.log("ℹ️ Keine aktiven Bots mit Token in bots.json gefunden.");
-    return;
-  }
-
-  console.log(`🚀 Starte ${activeBots.length} Telegram-Bot(s)...`);
-
-  for (const botConfig of activeBots) {
-    try {
-      await launchTelegramBot(botConfig);
-    } catch (err) {
-      console.error("❌ Fehler beim Starten von Bot", botConfig.id, err);
-    }
-  }
-}
-import { loadBots } from "../../dashboard/bots.js";
-
-export async function startTelegramBots(){
   const bots = loadBots();
 
   const activeBots = bots.filter(
@@ -171,7 +127,8 @@ export async function startTelegramBots(){
   for (const bot of activeBots) {
     await launchTelegramBot({
       botId: bot.id,
-      token: bot.token
+      token: bot.token,
+      allowedTelegramIds: bot.allowedTelegramIds || []
     });
   }
 }
