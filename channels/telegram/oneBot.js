@@ -2,12 +2,10 @@ import { Telegraf } from "telegraf";
 import OpenAI from "openai";
 import fs from "fs";
 import path from "path";
-
-// ✅ EINZIGER korrekter Import
 import { loadBots } from "../../dashboard/bots.js";
 
 /* =========================
-   PERSISTENTE DISK (Render)
+   PERSISTENTE DISK
 ========================= */
 const DATA_DIR = process.env.RENDER_PERSISTENT_DIR || "/var/data";
 const INFO_DIR = path.join(DATA_DIR, "bots_info");
@@ -25,7 +23,7 @@ const openai = new OpenAI({
 });
 
 /* =========================
-   LAUFENDE BOTS (Registry)
+   BOT REGISTRY
 ========================= */
 const runningBots = new Map();
 
@@ -35,18 +33,12 @@ const runningBots = new Map();
 async function launchBot(botConfig) {
   const { id, token, allowedTelegramIds = [] } = botConfig;
 
-  if (!token) {
-    console.log(`⛔ Bot ${id} übersprungen – kein Token`);
-    return;
-  }
+  if (!token) return;
 
-  // 🛑 Stoppe alten Bot falls vorhanden
+  // ✅ WICHTIG: NICHT neu starten, wenn er schon läuft
   if (runningBots.has(id)) {
-    try {
-      await runningBots.get(id).stop();
-      console.log(`🛑 Bot ${id} gestoppt`);
-    } catch {}
-    runningBots.delete(id);
+    console.log(`✅ Bot ${id} läuft bereits – übersprungen`);
+    return;
   }
 
   console.log(`🟢 Starte Bot ${id}`);
@@ -58,7 +50,7 @@ async function launchBot(botConfig) {
   }
 
   bot.start(ctx => {
-    ctx.reply("👋 Bot ist online. Schreib mir einfach.");
+    ctx.reply("👋 Bot ist online.");
   });
 
   bot.on("text", async ctx => {
@@ -72,7 +64,7 @@ async function launchBot(botConfig) {
     try {
       const info = fs.readFileSync(infoFile, "utf8");
 
-      const result = await openai.chat.completions.create({
+      const res = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [
           { role: "system", content: "Antworte nur anhand dieser Infos:\n" + info },
@@ -82,10 +74,9 @@ async function launchBot(botConfig) {
         max_tokens: 350
       });
 
-      const answer = result.choices?.[0]?.message?.content?.trim();
-      ctx.reply(answer || "🤔 Dazu habe ich keine Information.");
-    } catch (err) {
-      console.error(`❌ OpenAI Fehler (${id}):`, err);
+      ctx.reply(res.choices?.[0]?.message?.content || "🤔 Keine Info vorhanden.");
+    } catch (e) {
+      console.error(`❌ OpenAI Fehler (${id})`, e);
       ctx.reply("⚠️ Fehler beim Antworten.");
     }
   });
@@ -102,15 +93,15 @@ async function launchBot(botConfig) {
 ========================= */
 export async function startTelegramBots() {
   const bots = loadBots();
-
   console.log(`🔄 Bot-Reload: ${bots.length} Config(s)`);
 
-  // 🧹 Stoppe Bots die nicht mehr aktiv sind
+  // 🧹 Stoppe nur Bots, die deaktiviert wurden
   for (const [id, bot] of runningBots.entries()) {
-    if (!bots.find(b => b.id === id && b.active && b.token)) {
+    const stillActive = bots.find(b => b.id === id && b.active && b.token);
+    if (!stillActive) {
       try {
         await bot.stop();
-        console.log(`🛑 Bot ${id} gestoppt (nicht mehr aktiv)`);
+        console.log(`🛑 Bot ${id} deaktiviert`);
       } catch {}
       runningBots.delete(id);
     }
