@@ -6,9 +6,8 @@ import {
   requireAuth,
   requireAdmin,
   setCookie,
-  parseCookies,
-  hashPassword,      // ⬅️ wichtig
-  verifyPassword     // ⬅️ brauchst du für Login
+  hashPassword,
+  verifyPassword
 } from "./auth.js";
 
 import { loadBots, saveBots, createBot } from "./bots.js";
@@ -17,7 +16,7 @@ import { startTelegramBots } from "../channels/telegram/oneBot.js";
 const router = express.Router();
 
 /* =========================
-   GLOBAL STYLE
+   STYLE + LAYOUT
 ========================= */
 const baseStyle = (dark=false)=>`
 <style>
@@ -25,7 +24,7 @@ const baseStyle = (dark=false)=>`
 body{margin:0;font-family:system-ui,sans-serif;background:${dark?"#111":"#f4f4f4"};color:${dark?"#eee":"#111"}}
 .container{max-width:900px;margin:40px auto;background:${dark?"#1a1a1a":"#fff"};padding:32px;border-radius:12px}
 nav a{margin-right:16px;font-weight:600}
-input,button{width:100%;padding:14px;margin-top:10px;font-size:16px}
+input,button,select{width:100%;padding:14px;margin-top:10px;font-size:16px}
 button{border:none;border-radius:6px;cursor:pointer}
 .primary{background:#4f46e5;color:white}
 .danger{background:#b91c1c;color:white}
@@ -33,99 +32,67 @@ button{border:none;border-radius:6px;cursor:pointer}
 </style>
 `;
 
-function layout(req = {}, content){
+function layout(req={}, content){
   const role = req.user?.role || "guest";
-
   return `<!doctype html>
-<html>
-<head><meta charset="utf-8">${baseStyle(req.user?.darkMode)}</head>
+<html><head><meta charset="utf-8">${baseStyle(req.user?.darkMode)}</head>
 <body>
-
 <nav class="container">
   <a href="/dashboard/account">Account</a>
   <a href="/dashboard/bots">Bots</a>
-  ${role!=="customer" && role!=="guest" ? `<a href="/dashboard/admin">Admin</a>`:""}
-  ${role!=="guest" ? `<a href="/logout" style="color:#e11d48">Logout</a>`:""}
+  ${role!=="customer"&&role!=="guest"?`<a href="/dashboard/admin">Admin</a>`:""}
+  ${role!=="guest"?`<a href="/logout" style="color:#e11d48">Logout</a>`:""}
 </nav>
-
-<div class="container">
-${content}
-</div>
-
+<div class="container">${content}</div>
 </body></html>`;
 }
-router.get("/register", (req, res) => {
-  res.send(layout({}, `
-    <h2>Registrierung</h2>
 
-    <form method="POST">
-      <input name="firstName" placeholder="Vorname" required>
-      <input name="lastName" placeholder="Nachname" required>
-
-      <input name="email" placeholder="Email">
-      <input name="phone" placeholder="Telefon">
-
-      <input type="password" name="password" placeholder="Passwort" required>
-      <input type="password" name="password2" placeholder="Passwort bestätigen" required>
-
-      <button class="primary">Registrieren</button>
-    </form>
-
-    <p style="margin-top:10px;color:#666">
-      Email ODER Telefonnummer erforderlich
-    </p>
-  `));
+/* =========================
+   REGISTER
+========================= */
+router.get("/register",(req,res)=>{
+  res.send(layout({},`
+<h2>Registrierung</h2>
+<form method="POST">
+<input name="firstName" placeholder="Vorname" required>
+<input name="lastName" placeholder="Nachname" required>
+<input name="email" placeholder="Email">
+<input name="phone" placeholder="Telefon">
+<input type="password" name="password" placeholder="Passwort" required>
+<input type="password" name="password2" placeholder="Bestätigen" required>
+<button class="primary">Registrieren</button>
+</form>
+<p>Email ODER Telefon erforderlich</p>
+`));
 });
-router.post("/register", (req, res) => {
-  const {
-    firstName,
-    lastName,
-    email,
-    phone,
-    password,
-    password2
-  } = req.body;
 
-  if (!email && !phone)
-    return res.send("❌ Email oder Telefon erforderlich");
+router.post("/register",(req,res)=>{
+  const {firstName,lastName,email,phone,password,password2}=req.body;
+  if(!email && !phone) return res.send("❌ Email oder Telefon nötig");
+  if(password!==password2) return res.send("❌ Passwörter stimmen nicht");
 
-  if (password !== password2)
-    return res.send("❌ Passwörter stimmen nicht überein");
+  const accounts=loadAccounts();
+  if(email && accounts.some(a=>a.email===email)) return res.send("❌ Email existiert");
+  if(phone && accounts.some(a=>a.phone===phone)) return res.send("❌ Telefon existiert");
 
-  const accounts = loadAccounts();
-
-  if (email && accounts.some(a => a.email === email))
-    return res.send("❌ Email bereits registriert");
-
-  if (phone && accounts.some(a => a.phone === phone))
-    return res.send("❌ Nummer bereits registriert");
-
-  const { salt, hash } = hashPassword(password);
-
-  const isFirst = !accounts.some(a => a.role === "superadmin");
+  const {salt,hash}=hashPassword(password);
+  const isFirst=!accounts.some(a=>a.role==="superadmin");
 
   accounts.push({
-    firstName,
-    lastName,
-    email: email || null,
-    phone: phone || null,
-    salt,
-    hash,
-    role: isFirst ? "superadmin" : "customer",
-    approved: isFirst,       // ❗ nur erster Account sofort
-    deviceTokens: [],
-    darkMode: false,
-    forcePasswordReset: false,
-    resetToken: null
+    firstName,lastName,
+    email:email||null,
+    phone:phone||null,
+    salt,hash,
+    role:isFirst?"superadmin":"customer",
+    approved:isFirst,
+    deviceTokens:[],
+    darkMode:false
   });
 
   saveAccounts(accounts);
-
-  res.send(
-    isFirst
-      ? "✅ Superadmin erstellt. <a href='/login'>Login</a>"
-      : "✅ Registrierung erfolgreich – wartet auf Freigabe durch Admin."
-  );
+  res.send(isFirst
+    ? "✅ Superadmin erstellt. <a href='/login'>Login</a>"
+    : "✅ Registrierung – wartet auf Freigabe");
 });
 
 /* =========================
@@ -136,27 +103,22 @@ router.get("/login",(req,res)=>{
 <h2>Login</h2>
 <form method="POST">
 <input name="identifier" placeholder="Email oder Telefon" required>
-<input type="password" name="password" placeholder="Passwort" required>
+<input type="password" name="password" required>
 <button class="primary">Login</button>
-</form>
-`));
+</form>`));
 });
 
 router.post("/login",(req,res)=>{
-  const { identifier, password } = req.body;
-  const accounts = loadAccounts();
-  const acc = accounts.find(a=>a.email===identifier||a.phone===identifier);
-
-  if(!acc || !verifyPassword(password, acc.salt, acc.hash))
+  const {identifier,password}=req.body;
+  const accounts=loadAccounts();
+  const acc=accounts.find(a=>a.email===identifier||a.phone===identifier);
+  if(!acc||!verifyPassword(password,acc.salt,acc.hash))
     return res.send("❌ Login fehlgeschlagen");
+  if(!acc.approved) return res.send("⛔ Wartet auf Freigabe");
 
-  if(!acc.approved)
-    return res.send("⛔ Noch nicht freigegeben");
-
-  const token = crypto.randomBytes(32).toString("hex");
+  const token=crypto.randomBytes(32).toString("hex");
   acc.deviceTokens.push(token);
   saveAccounts(accounts);
-
   setCookie(res,"deviceToken",token,{httpOnly:true});
   res.redirect("/dashboard/account");
 });
@@ -166,25 +128,22 @@ router.post("/login",(req,res)=>{
 ========================= */
 router.get("/dashboard",(req,res)=>res.redirect("/dashboard/account"));
 
-router.get("/dashboard/account", requireAuth,(req,res)=>{
+router.get("/dashboard/account",requireAuth,(req,res)=>{
   res.send(layout(req,`
 <h2>Account</h2>
-<p>${req.user.firstName} (${req.user.role})</p>
-`));
+<p>${req.user.firstName} (${req.user.role})</p>`));
 });
 
 /* =========================
    BOTS
 ========================= */
-router.get("/dashboard/bots", requireAuth,(req,res)=>{
-  const bots = loadBots();
-  const visible =
-    req.user.role==="customer"
-      ? bots.filter(b=>b.ownerEmail===req.user.email)
-      : bots;
+router.get("/dashboard/bots",requireAuth,(req,res)=>{
+  const bots=loadBots();
+  const visible=req.user.role==="customer"
+    ? bots.filter(b=>b.ownerEmail===req.user.email)
+    : bots;
 
   let html="<h2>Bots</h2>";
-
   visible.forEach(b=>{
     html+=`
 <div class="card">
@@ -192,37 +151,33 @@ router.get("/dashboard/bots", requireAuth,(req,res)=>{
 ID: ${b.id}<br>
 Besitzer: ${b.ownerEmail}<br>
 Status: ${b.active?"✅":"⛔"}<br>
-Telegram IDs: ${b.allowedTelegramIds?.join(", ") || "-"}
-
-${req.user.role!=="customer" ? `
+Telegram IDs: ${b.allowedTelegramIds?.join(", ")||"-"}
+${req.user.role!=="customer"?`
 <form method="POST" action="/dashboard/bots/update">
 <input type="hidden" name="id" value="${b.id}">
-<input name="token" value="${b.token||""}" placeholder="Bot Token">
+<input name="token" value="${b.token||""}">
 <label><input type="checkbox" name="active" ${b.active?"checked":""}> aktiv</label>
 <button class="primary">Speichern</button>
 </form>
-
 <form method="POST" action="/dashboard/bots/add-telegram">
 <input type="hidden" name="id" value="${b.id}">
-<input name="telegramId" placeholder="Telegram User ID">
-<button>Telegram ID hinzufügen</button>
-</form>
-`:""}
-
+<input name="telegramId">
+<button>ID hinzufügen</button>
+</form>`:""}
 ${req.user.role==="superadmin"?`
-<form method="POST" action="/dashboard/bots/delete" onsubmit="return confirm('Bot wirklich löschen?')">
+<form method="POST" action="/dashboard/bots/delete">
 <input type="hidden" name="id" value="${b.id}">
-<button class="danger">🗑 Bot löschen</button>
+<button class="danger">🗑 Löschen</button>
 </form>`:""}
 </div>`;
   });
 
   if(req.user.role!=="customer"){
     html+=`
-<h3>➕ Bot erstellen</h3>
+<h3>Bot erstellen</h3>
 <form method="POST" action="/dashboard/bots/create">
-<input name="name" placeholder="Name" required>
-<input name="ownerEmail" placeholder="Owner Email" required>
+<input name="name" required>
+<input name="ownerEmail" required>
 <button class="primary">Erstellen</button>
 </form>`;
   }
@@ -230,76 +185,76 @@ ${req.user.role==="superadmin"?`
   res.send(layout(req,html));
 });
 
-/* ===== BOT ACTIONS ===== */
-router.post("/dashboard/bots/create", requireAuth, requireAdmin,(req,res)=>{
-  const bots = loadBots();
-  bots.push(createBot(req.body.name, req.body.ownerEmail));
+router.post("/dashboard/bots/create",requireAuth,requireAdmin,(req,res)=>{
+  const bots=loadBots();
+  bots.push(createBot(req.body.name,req.body.ownerEmail));
   saveBots(bots);
+  startTelegramBots();
   res.redirect("/dashboard/bots");
 });
 
-router.post("/dashboard/bots/update", requireAuth, requireAdmin,(req,res)=>{
-  const bots = loadBots();
-  const b = bots.find(x=>x.id===req.body.id);
-  if(!b) return res.send("❌ Bot nicht gefunden");
-
-  b.token = req.body.token || "";
-  b.active = !!req.body.active;
-
-  saveBots(bots);
-  res.redirect("/dashboard/bots");
-});
-
-router.post("/dashboard/bots/add-telegram", requireAuth, requireAdmin,(req,res)=>{
-  const bots = loadBots();
-  const b = bots.find(x=>x.id===req.body.id);
+router.post("/dashboard/bots/update",requireAuth,requireAdmin,(req,res)=>{
+  const bots=loadBots();
+  const b=bots.find(x=>x.id===req.body.id);
   if(!b) return res.send("❌");
+  b.token=req.body.token||"";
+  b.active=!!req.body.active;
+  saveBots(bots);
+  startTelegramBots();
+  res.redirect("/dashboard/bots");
+});
 
+router.post("/dashboard/bots/add-telegram",requireAuth,requireAdmin,(req,res)=>{
+  const bots=loadBots();
+  const b=bots.find(x=>x.id===req.body.id);
   b.allowedTelegramIds ||= [];
   if(!b.allowedTelegramIds.includes(req.body.telegramId))
     b.allowedTelegramIds.push(req.body.telegramId);
-
   saveBots(bots);
   res.redirect("/dashboard/bots");
 });
 
-router.post("/dashboard/bots/delete", requireAuth, requireAdmin,(req,res)=>{
+router.post("/dashboard/bots/delete",requireAuth,requireAdmin,(req,res)=>{
   if(req.user.role!=="superadmin") return res.send("🚫");
-  const bots = loadBots().filter(b=>b.id!==req.body.id);
-  saveBots(bots);
+  saveBots(loadBots().filter(b=>b.id!==req.body.id));
+  startTelegramBots();
   res.redirect("/dashboard/bots");
 });
 
 /* =========================
-   ADMIN
+   ADMIN – FREIGABE
 ========================= */
-router.get("/dashboard/admin", requireAuth, requireAdmin,(req,res)=>{
-  const accs = loadAccounts();
-  let html="<h2>Admin Übersicht</h2>";
+router.get("/dashboard/admin",requireAuth,requireAdmin,(req,res)=>{
+  const accs=loadAccounts();
+  let html="<h2>Admin – Freigaben</h2>";
 
   accs.forEach((a,i)=>{
-    if(a.email===req.user.email) return;
+    if(a.approved) return;
     html+=`
 <div class="card">
 <b>${a.firstName} ${a.lastName}</b><br>
-Rolle: ${a.role}<br>
-Status: ${a.approved?"✅":"⛔"}
-
-${req.user.role==="superadmin"?`
-<form method="POST" action="/dashboard/admin/delete" onsubmit="return confirm('Account löschen?')">
+<form method="POST" action="/dashboard/admin/approve">
 <input type="hidden" name="idx" value="${i}">
-<button class="danger">🗑 Account löschen</button>
-</form>`:""}
+<select name="role">
+<option value="customer">Customer</option>
+${req.user.role==="superadmin"?`<option value="admin">Admin</option>`:""}
+</select>
+<button class="primary">✅ Freigeben</button>
+</form>
 </div>`;
   });
 
   res.send(layout(req,html));
 });
 
-router.post("/dashboard/admin/delete", requireAuth, requireAdmin,(req,res)=>{
-  if(req.user.role!=="superadmin") return res.send("🚫");
-  const accs = loadAccounts();
-  accs.splice(Number(req.body.idx),1);
+router.post("/dashboard/admin/approve",requireAuth,requireAdmin,(req,res)=>{
+  const accs=loadAccounts();
+  const acc=accs[req.body.idx];
+  if(!acc) return res.send("❌");
+  if(req.body.role==="admin" && req.user.role!=="superadmin")
+    return res.send("🚫");
+  acc.approved=true;
+  acc.role=req.body.role;
   saveAccounts(accs);
   res.redirect("/dashboard/admin");
 });
