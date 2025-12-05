@@ -6,10 +6,13 @@ import {
   requireAuth,
   requireAdmin,
   setCookie,
-  verifyPassword
+  parseCookies,
+  hashPassword,      // ⬅️ wichtig
+  verifyPassword     // ⬅️ brauchst du für Login
 } from "./auth.js";
 
 import { loadBots, saveBots, createBot } from "./bots.js";
+import { startTelegramBots } from "../channels/telegram/oneBot.js";
 
 const router = express.Router();
 
