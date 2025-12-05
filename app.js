@@ -9,9 +9,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use("/", dashboardRoutes);
 
-// ✅ Bots ein einziges Mal starten
-startTelegramBots();
-
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log("✅ Server läuft auf Port", PORT);
+  await startTelegramBots();   // ✅ EINMAL
 });
