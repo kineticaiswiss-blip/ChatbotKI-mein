@@ -51,6 +51,79 @@ ${content}
 
 </body></html>`;
 }
+router.get("/register", (req, res) => {
+  res.send(layout({}, `
+    <h2>Registrierung</h2>
+
+    <form method="POST">
+      <input name="firstName" placeholder="Vorname" required>
+      <input name="lastName" placeholder="Nachname" required>
+
+      <input name="email" placeholder="Email">
+      <input name="phone" placeholder="Telefon">
+
+      <input type="password" name="password" placeholder="Passwort" required>
+      <input type="password" name="password2" placeholder="Passwort bestätigen" required>
+
+      <button class="primary">Registrieren</button>
+    </form>
+
+    <p style="margin-top:10px;color:#666">
+      Email ODER Telefonnummer erforderlich
+    </p>
+  `));
+});
+router.post("/register", (req, res) => {
+  const {
+    firstName,
+    lastName,
+    email,
+    phone,
+    password,
+    password2
+  } = req.body;
+
+  if (!email && !phone)
+    return res.send("❌ Email oder Telefon erforderlich");
+
+  if (password !== password2)
+    return res.send("❌ Passwörter stimmen nicht überein");
+
+  const accounts = loadAccounts();
+
+  if (email && accounts.some(a => a.email === email))
+    return res.send("❌ Email bereits registriert");
+
+  if (phone && accounts.some(a => a.phone === phone))
+    return res.send("❌ Nummer bereits registriert");
+
+  const { salt, hash } = hashPassword(password);
+
+  const isFirst = !accounts.some(a => a.role === "superadmin");
+
+  accounts.push({
+    firstName,
+    lastName,
+    email: email || null,
+    phone: phone || null,
+    salt,
+    hash,
+    role: isFirst ? "superadmin" : "customer",
+    approved: isFirst,       // ❗ nur erster Account sofort
+    deviceTokens: [],
+    darkMode: false,
+    forcePasswordReset: false,
+    resetToken: null
+  });
+
+  saveAccounts(accounts);
+
+  res.send(
+    isFirst
+      ? "✅ Superadmin erstellt. <a href='/login'>Login</a>"
+      : "✅ Registrierung erfolgreich – wartet auf Freigabe durch Admin."
+  );
+});
 
 /* =========================
    LOGIN
