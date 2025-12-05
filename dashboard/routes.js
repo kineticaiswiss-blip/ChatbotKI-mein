@@ -33,18 +33,34 @@ button{border:none;border-radius:6px;cursor:pointer}
 </style>
 `;
 
-function layout(req, content){
-  return `<!doctype html><html><head><meta charset="utf-8">
-  ${baseStyle(req.user?.darkMode)}
-  </head><body>
-  <nav class="container">
-    <a href="/dashboard/account">Account</a>
-    <a href="/dashboard/bots">Bots</a>
-    ${req.user.role!=="customer"?`<a href="/dashboard/admin">Admin</a>`:""}
-    <a href="/logout" style="color:#e11d48">Logout</a>
-  </nav>
-  <div class="container">${content}</div>
-  </body></html>`;
+function layout(req = {}, content) {
+  const role = req.user?.role || "guest";
+
+  return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+${baseStyle(req.user?.darkMode)}
+</head>
+<body>
+
+<nav class="container">
+  <a href="/dashboard/account">Account</a>
+  <a href="/dashboard/bots">Bots</a>
+  ${role !== "customer" && role !== "guest"
+    ? `<a href="/dashboard/admin">Admin</a>`
+    : ""}
+  ${role !== "guest"
+    ? `<a href="/logout" style="color:#e11d48">Logout</a>`
+    : ""}
+</nav>
+
+<div class="container">
+${content}
+</div>
+
+</body>
+</html>`;
 }
 
 /* =========================
