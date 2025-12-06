@@ -5,17 +5,6 @@ import path from "path";
 import { loadBots } from "../../dashboard/bots.js";
 
 /* =========================
-   PERSISTENTE DISK
-========================= */
-const DATA_DIR = process.env.RENDER_PERSISTENT_DIR || "/var/data";
-const INFO_DIR = path.join(DATA_DIR, "bots_info");
-
-if (!fs.existsSync(INFO_DIR)) {
-  fs.mkdirSync(INFO_DIR, { recursive: true });
-  console.log("✅ INFO_DIR angelegt:", INFO_DIR);
-}
-
-/* =========================
    OPENAI
 ========================= */
 const openai = new OpenAI({
@@ -23,22 +12,39 @@ const openai = new OpenAI({
 });
 
 /* =========================
-   BOT REGISTRY
+   PERSISTENT DISK (Render)
 ========================= */
-const runningBots = new Map();
+const DATA_DIR = process.env.RENDER_PERSISTENT_DIR || "/var/data";
+const INFO_DIR = path.join(DATA_DIR, "bots_info");
+
+if (!fs.existsSync(INFO_DIR)) {
+  fs.mkdirSync(INFO_DIR, { recursive: true });
+  console.log("✅ INFO_DIR erstellt:", INFO_DIR);
+}
 
 /* =========================
-   EINEN BOT STARTEN
+   RUNNING BOTS REGISTRY
 ========================= */
-async function launchBot(botConfig) {
-  const { id, token, allowedTelegramIds = [] } = botConfig;
+const runningBots = new Map(); // id → Telegraf
 
-  if (!token) return;
+/* =========================
+   START SINGLE BOT (SAFE)
+========================= */
+async function startSingleBot(botConfig) {
+  const { id, token, active, allowedTelegramIds = [] } = botConfig;
 
-  // ✅ WICHTIG: NICHT neu starten, wenn er schon läuft
-  if (runningBots.has(id)) {
-    console.log(`✅ Bot ${id} läuft bereits – übersprungen`);
+  if (!active || !token) {
+    console.log(`⏭️ Bot ${id} übersprungen (inaktiv oder kein Token)`);
     return;
+  }
+
+  // ✅ IMMER vorher stoppen → sonst 409
+  if (runningBots.has(id)) {
+    try {
+      await runningBots.get(id).stop();
+      console.log(`🛑 Alter Bot gestoppt: ${id}`);
+    } catch {}
+    runningBots.delete(id);
   }
 
   console.log(`🟢 Starte Bot ${id}`);
@@ -56,9 +62,11 @@ async function launchBot(botConfig) {
   bot.on("text", async ctx => {
     const userId = String(ctx.from.id);
 
-    if (allowedTelegramIds.length && !allowedTelegramIds.includes(userId)) {
-      ctx.reply("🚫 Du bist für diesen Bot nicht freigeschaltet.");
-      return;
+    if (
+      allowedTelegramIds.length &&
+      !allowedTelegramIds.includes(userId)
+    ) {
+      return ctx.reply("🚫 Nicht freigeschaltet.");
     }
 
     try {
@@ -67,17 +75,20 @@ async function launchBot(botConfig) {
       const res = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [
-          { role: "system", content: "Antworte nur anhand dieser Infos:\n" + info },
+          { role: "system", content: "Antworte NUR anhand dieser Infos:\n" + info },
           { role: "user", content: ctx.message.text }
         ],
         temperature: 0.2,
-        max_tokens: 350
+        max_tokens: 300
       });
 
-      ctx.reply(res.choices?.[0]?.message?.content || "🤔 Keine Info vorhanden.");
-    } catch (e) {
-      console.error(`❌ OpenAI Fehler (${id})`, e);
-      ctx.reply("⚠️ Fehler beim Antworten.");
+      await ctx.reply(
+        res.choices?.[0]?.message?.content?.trim() ||
+        "🤔 Keine Information vorhanden."
+      );
+    } catch (err) {
+      console.error(`❌ OpenAI Fehler (${id})`, err.message);
+      await ctx.reply("⚠️ Interner Fehler.");
     }
   });
 
@@ -85,32 +96,42 @@ async function launchBot(botConfig) {
   await bot.launch({ dropPendingUpdates: true });
 
   runningBots.set(id, bot);
-  console.log(`✅ Telegram-Bot gestartet: ${id}`);
+  console.log(`✅ Bot aktiv: ${id}`);
 }
 
 /* =========================
-   ALLE AKTIVEN BOTS STARTEN
+   START / RELOAD ALL BOTS
 ========================= */
 export async function startTelegramBots() {
   const bots = loadBots();
-  console.log(`🔄 Bot-Reload: ${bots.length} Config(s)`);
+  console.log(`🔄 Bot-Reload (${bots.length} Konfigurationen)`);
 
-  // 🧹 Stoppe nur Bots, die deaktiviert wurden
+  // 🧹 Stoppe entfernte / deaktivierte Bots
   for (const [id, bot] of runningBots.entries()) {
-    const stillActive = bots.find(b => b.id === id && b.active && b.token);
-    if (!stillActive) {
+    const exists = bots.find(b => b.id === id && b.active && b.token);
+    if (!exists) {
       try {
         await bot.stop();
-        console.log(`🛑 Bot ${id} deaktiviert`);
+        console.log(`🛑 Bot gestoppt: ${id}`);
       } catch {}
       runningBots.delete(id);
     }
   }
 
-  const active = bots.filter(b => b.active && b.token);
-  console.log(`🚀 Starte ${active.length} Telegram-Bot(s)...`);
-
-  for (const bot of active) {
-    await launchBot(bot);
+  // ▶️ Starte alle aktiven
+  for (const bot of bots) {
+    await startSingleBot(bot);
   }
+
+  console.log("🤖 Telegram-Bots synchronisiert");
 }
+
+/* =========================
+   CLEAN SHUTDOWN (Render)
+========================= */
+process.once("SIGINT", async () => {
+  for (const bot of runningBots.values()) {
+    try { await bot.stop(); } catch {}
+  }
+  process.exit(0);
+});
